@@ -4,6 +4,14 @@ struct LogView: View {
     @Environment(AppModel.self) private var model
     @State private var editing: LogEntry?
 
+    /// Days are UTC days, like the times.
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "d MMM yyyy 'UTC'"
+        return formatter
+    }()
+
     private var days: [(Date, [LogEntry])] {
         let calendar = Calendar(identifier: .gregorian)
         var utc = calendar
@@ -24,7 +32,7 @@ struct LogView: View {
                 } else {
                     List {
                         ForEach(days, id: \.0) { day, entries in
-                            Section(day.formatted(.dateTime.year().month().day())) {
+                            Section(Self.dayFormatter.string(from: day)) {
                                 ForEach(entries) { entry in
                                     Button { editing = entry } label: { LogRow(entry: entry) }
                                         .buttonStyle(.plain)

@@ -2,6 +2,17 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var selectedTab = RootView.initialTab
+
+    /// `-tab log` or `-tab settings` on a debug launch opens that tab.
+    private static var initialTab: Int {
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "-tab"), index + 1 < CommandLine.arguments.count {
+            return ["operate", "log", "settings"].firstIndex(of: CommandLine.arguments[index + 1]) ?? 0
+        }
+        #endif
+        return 0
+    }
 
     var body: some View {
         Group {
@@ -22,13 +33,16 @@ struct RootView: View {
     }
 
     private var tabs: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             OperateView()
                 .tabItem { Label("Operate", systemImage: "antenna.radiowaves.left.and.right") }
+                .tag(0)
             LogView()
                 .tabItem { Label("Log", systemImage: "book.closed") }
+                .tag(1)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(2)
         }
     }
 }

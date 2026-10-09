@@ -48,11 +48,14 @@ struct SettingsView: View {
                 model.wrappedValue.preferences.dialFrequency = band.suggestedDialFrequency
             }
             LabeledContent("Dial frequency") {
-                TextField("14080000", value: model.preferences.dialFrequency, format: .number.grouping(.never))
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .monospacedDigit()
-                Text("Hz").foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    TextField("14080000", value: model.preferences.dialFrequency, format: .number.grouping(.never))
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .frame(maxWidth: 120)
+                    Text("Hz").foregroundStyle(.secondary)
+                }
             }
         } header: {
             Text("Station")

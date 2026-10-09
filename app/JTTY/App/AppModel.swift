@@ -35,10 +35,12 @@ struct TranscriptLine: Identifiable, Equatable {
 final class AppModel {
     var preferences: Preferences {
         didSet {
-            preferences.save()
+            if !suppressesSaving { preferences.save() }
             applyPreferences()
         }
     }
+    /// Debug modes seed settings that must not survive the launch.
+    private var suppressesSaving = false
     let audio = RadioAudioController()
     let logbook = Logbook()
 
@@ -63,13 +65,51 @@ final class AppModel {
         audio.onTransmitFinished = { [weak self] in self?.transmissionsFinished() }
         #if DEBUG
         if CommandLine.arguments.contains("-demo") { seedDemo() }
+        if CommandLine.arguments.contains("-selftest") { runSelfTest() }
         #endif
     }
 
     #if DEBUG
+    /// Start the audio, send F1 and F2, and write what happened to
+    /// Documents/selftest.log, so the real audio path can be checked on a
+    /// phone from the command line. Nothing is persisted.
+    private func runSelfTest() {
+        suppressesSaving = true
+        var prefs = preferences
+        if prefs.callsign.isEmpty { prefs.callsign = "W2ASM" }
+        prefs.hasCompletedSetup = true
+        preferences = prefs
+        hisCall = "W9XYZ"
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("selftest.log")
+        var lines: [String] = []
+        func note(_ text: String) {
+            lines.append("\(Date().formatted(.iso8601)) \(text)")
+            try? lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
+        }
+        note("self-test started")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            toggleListening()
+            note("listening=\(isListening) error=\(errorMessage ?? "none")")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                sendMacro(0)
+                sendMacro(1)
+                note("sent F1+F2 transmitting=\(isTransmitting) queued=\(audio.queuedTransmissions) error=\(errorMessage ?? "none") level=\(audio.inputLevel)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                    guard let self else { return }
+                    note("after 8 s transmitting=\(isTransmitting) queued=\(audio.queuedTransmissions) level=\(audio.inputLevel) heard=\(transcript.filter { $0.kind == .received }.count) sentDone=\(transcript.filter { $0.kind == .sent && !$0.isInProgress }.count)")
+                    toggleListening()
+                    note("stopped listening=\(isListening)")
+                }
+            }
+        }
+    }
+
     /// A screen's worth of made-up traffic, for checking the layout on a
     /// simulator that has no radio behind it.
     private func seedDemo() {
+        suppressesSaving = true
         var prefs = preferences
         prefs.callsign = "W2ASM"
         prefs.grid = "FN20"
@@ -78,6 +118,12 @@ final class AppModel {
         preferences = prefs
         hisCall = "W9XYZ"
         let now = Date()
+        if logbook.entries.isEmpty, CommandLine.arguments.contains("-demolog") {
+            logbook.add(LogEntry(callsign: "K1ABC", time: now.addingTimeInterval(-900), band: .m20, frequency: 14_081_500,
+                                 exchangeSent: "599 105", exchangeReceived: "599 212", myCallsign: "W2ASM", myGrid: "FN20"))
+            logbook.add(LogEntry(callsign: "W1UE", time: now.addingTimeInterval(-300), band: .m20, frequency: 14_081_500,
+                                 exchangeSent: "599 106", exchangeReceived: "599 034", myCallsign: "W2ASM", myGrid: "FN20"))
+        }
         let lines: [(String, Double, Float, Int, Bool, TranscriptLine.Kind)] = [
             ("CQ K1ABC CQ", 1507, -3, 1, false, .received),
             ("RAN ALL NIGHT ON BAND NOISE - NO FALSE DECODES!", 1507, -9, 10, false, .received),
