@@ -3,9 +3,10 @@
 
     python3 tools/make_app_icon.py app/JTTY/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
-Three message tiles on the dark slate shared with the other shack apps:
-teal, sand and salmon, each carrying a short run of dots and dashes in the
-slate, with the app's name under them in cream as on the FT8 icon.
+Three message tiles on the dark slate shared with the other shack apps,
+teal, sand and salmon, with the app's name under them in cream as on the
+FT8 icon. The tiles are plain: a stepped four-tone trace inside them was
+tried (SHOW_TRACE) and did not survive the home screen.
 Keyboard-to-keyboard on the air is a conversation, and this is the family's
 picture of one.
 """
@@ -26,22 +27,26 @@ SALMON = (0.871, 0.506, 0.384)
 
 CREAM = (0.949, 0.906, 0.827)
 
-# Tiles as (left, top, right, bottom, colour, glyphs) in the coordinates of
-# the original mark; glyph runs are strings of '.' and '-', centred in the
-# tile. The whole group is scaled and placed by MARK_SCALE / MARK_TOP so the
-# wordmark fits underneath, and the group is centred on the tile the way the
-# wordmark is.
+# Tiles as (left, top, right, bottom, colour, tones) in the coordinates of
+# the original mark. The tones are a run of JTTY symbols, 0 to 3, drawn the
+# way the signal looks on a waterfall turned on its side: time across,
+# frequency up, one level per tone, continuous because GFSK never breaks
+# phase. The first tile carries the start of the sync pattern. The group is
+# scaled and placed by MARK_SCALE / MARK_TOP so the wordmark fits
+# underneath, and centred on the tile the way the wordmark is.
 TILES = [
-    (186, 212, 584, 392, TEAL, "-.-"),
-    (390, 400, 776, 578, SAND, "..."),
-    (204, 592, 450, 770, SALMON, "-"),
+    (186, 212, 584, 392, TEAL, [0, 2, 3, 1]),
+    (390, 400, 776, 578, SAND, [3, 1, 2, 0]),
+    (204, 592, 450, 770, SALMON, [1, 3]),
 ]
+# The trace was tried and left off: at home-screen size a stepped line
+# inside a 60-point tile is a smudge, and the plain tiles read better.
+SHOW_TRACE = False
+TRACE_WIDTH = 34.0    # stroke of the trace, before scaling
+TRACE_INSET = 52.0    # from the tile edge to the trace's extent
 MARK_SCALE = 0.80
 MARK_TOP = 128.0
 TILE_RADIUS = 64.0
-DOT = 46.0            # glyph height and dot diameter
-DASH = 92.0           # dash length
-GLYPH_GAP = 26.0
 
 # Wordmark, as on the FT8 icon: stroked letters rather than a font, so the
 # script has no dependencies and the weight matches the tiles' glyphs.
@@ -161,18 +166,19 @@ def placed_tiles():
     ]
 
 
-def glyph_boxes(tile):
-    x0, y0, x1, y1, _, run = tile
-    dot, dash, gap = DOT * MARK_SCALE, DASH * MARK_SCALE, GLYPH_GAP * MARK_SCALE
-    widths = [dash if g == "-" else dot for g in run]
-    total = sum(widths) + gap * (len(run) - 1)
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    cursor = cx - total / 2
-    boxes = []
-    for w in widths:
-        boxes.append((cursor, cy - dot / 2, cursor + w, cy + dot / 2))
-        cursor += w + gap
-    return boxes
+def trace(tile):
+    """The tone sequence as a stepped polyline inside the tile."""
+    x0, y0, x1, y1, _, tones = tile
+    inset = TRACE_INSET * MARK_SCALE
+    left, right = x0 + inset, x1 - inset
+    top, bottom = y0 + inset, y1 - inset
+    step = (right - left) / len(tones)
+    levels = [bottom - (bottom - top) * t / 3 for t in tones]
+    points = []
+    for i, y in enumerate(levels):
+        points.append((left + i * step, y))
+        points.append((left + (i + 1) * step, y))
+    return points
 
 
 def ellipse(c, sx, sy, steps=90, start=0.0, end=360.0):
@@ -237,8 +243,8 @@ def main(path):
     for tile in tiles:
         x0, y0, x1, y1, color, _ = tile
         canvas.rounded_rect(x0, y0, x1, y1, radius, color)
-        for gx0, gy0, gx1, gy1 in glyph_boxes(tile):
-            canvas.rounded_rect(gx0, gy0, gx1, gy1, (gy1 - gy0) / 2, INK)
+        if SHOW_TRACE:
+            canvas.stroke(trace(tile), TRACE_WIDTH * MARK_SCALE, INK)
     for pts in letters:
         canvas.stroke(pts, TEXT_WIDTH, CREAM)
     print(f"wrote {path} ({canvas.write_png(path)} bytes)")
