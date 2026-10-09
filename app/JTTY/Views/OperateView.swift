@@ -179,12 +179,19 @@ struct OperateView: View {
             callField("Their call", text: $model.theirCall)
             callField("Next", text: $model.queuedCall)
             if model.preferences.exchangeProfile != .fieldDay {
-                Stepper(value: $model.preferences.serialNumber, in: 0...131071) {
+                // The readout and the stepper are one control that must not
+                // wrap, however narrow the row gets with the keyboard up.
+                HStack(spacing: 6) {
                     Text(String(format: "%03d", model.preferences.serialNumber))
                         .font(.body.monospacedDigit().weight(.semibold))
+                        .contentTransition(.numericText())
+                    Stepper("Serial number", value: $model.preferences.serialNumber, in: 0...131071)
+                        .labelsHidden()
                 }
                 .fixedSize()
+                .accessibilityElement(children: .combine)
                 .accessibilityLabel("Serial number")
+                .accessibilityValue(String(format: "%03d", model.preferences.serialNumber))
             }
         }
         .padding(.horizontal)
@@ -196,7 +203,7 @@ struct OperateView: View {
             .autocorrectionDisabled()
             .font(.body.monospaced())
             .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 130)
+            .frame(maxWidth: .infinity)
             .onChange(of: text.wrappedValue) { _, value in
                 let upper = value.uppercased()
                 if upper != value { text.wrappedValue = upper }
