@@ -4,9 +4,9 @@
     python3 tools/make_app_icon.py app/JTTY/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
 Three message tiles on the dark slate shared with the other shack apps,
-teal, sand and salmon, with the app's name under them in cream as on the
-FT8 icon. The tiles are plain: a stepped four-tone trace inside them was
-tried (SHOW_TRACE) and did not survive the home screen.
+teal, sand and salmon, each carrying a few symbols of a JTTY signal as the
+stepped four-tone trace it draws on a waterfall, with the app's name under
+them in cream as on the FT8 icon.
 Keyboard-to-keyboard on the air is a conversation, and this is the family's
 picture of one.
 """
@@ -35,15 +35,13 @@ CREAM = (0.949, 0.906, 0.827)
 # scaled and placed by MARK_SCALE / MARK_TOP so the wordmark fits
 # underneath, and centred on the tile the way the wordmark is.
 TILES = [
-    (186, 212, 584, 392, TEAL, [0, 2, 3, 1]),
-    (390, 400, 776, 578, SAND, [3, 1, 2, 0]),
-    (204, 592, 450, 770, SALMON, [1, 3]),
+    (186, 212, 584, 392, TEAL, [0, 2, 2, 3, 0, 0, 3]),
+    (390, 400, 776, 578, SAND, [2, 1, 3, 1, 2, 0]),
+    (204, 592, 450, 770, SALMON, [1, 3, 0]),
 ]
-# The trace was tried and left off: at home-screen size a stepped line
-# inside a 60-point tile is a smudge, and the plain tiles read better.
-SHOW_TRACE = False
-TRACE_WIDTH = 34.0    # stroke of the trace, before scaling
-TRACE_INSET = 52.0    # from the tile edge to the trace's extent
+SHOW_TRACE = True
+TRACE_WIDTH = 26.0    # stroke of the trace, before scaling
+TRACE_INSET = 44.0    # from the tile edge to the trace's extent
 MARK_SCALE = 0.80
 MARK_TOP = 128.0
 TILE_RADIUS = 64.0
