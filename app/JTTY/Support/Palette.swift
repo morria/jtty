@@ -13,12 +13,14 @@ enum Palette {
     /// Transmitting. The one state that should never be missed.
     static let transmit = salmon
 
-    /// One hue stepped by lightness, weakest to strongest.
+    /// Signal strength, weakest to strongest: grey for a decode at the
+    /// threshold, then the teal deepening. Every step has to read on white
+    /// as well as on slate, which rules out the pale end of the hue.
     static let signalSteps: [Color] = [
-        Color(hex: 0x3E8395),
-        Color(hex: 0x63B3A6),
-        Color(hex: 0x9BD4C4),
-        Color(hex: 0xD3EDE3),
+        Color.secondary,
+        Color(hex: 0x4A96A3),
+        teal,
+        Color(hex: 0x2E8C7C),
     ]
     static let signalBounds: [Float] = [-12, -6, 0]
 
