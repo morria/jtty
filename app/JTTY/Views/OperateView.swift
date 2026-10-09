@@ -1,0 +1,359 @@
+import JTTYLib
+import SwiftUI
+
+/// The operating screen: the band as a transcript, with the exchange
+/// controls underneath. Messages heard come in on the left as they build;
+/// messages sent go out on the right.
+struct OperateView: View {
+    @Environment(AppModel.self) private var model
+    @State private var draft = ""
+    @State private var showsWaterfall = true
+    @FocusState private var composing: Bool
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationStack {
+            VStack(spacing: 0) {
+                if showsWaterfall {
+                    WaterfallView(
+                        lines: model.spectrumLines,
+                        rxFrequency: model.receiveFrequency,
+                        txFrequency: model.preferences.txFrequency
+                    ) { hz in
+                        model.preferences.txFrequency = hz
+                        if !model.preferences.rxFollowsTx { model.preferences.rxFrequency = hz }
+                    }
+                    .frame(height: 96)
+                    .padding(.horizontal)
+                    .padding(.bottom, 6)
+                }
+                transcript
+                Divider()
+                controls
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("JTTY")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 10) {
+                        InputLevelMeter(level: model.audio.inputLevel)
+                            .opacity(model.isListening ? 1 : 0.3)
+                        Text("\(Int(model.preferences.txFrequency)) Hz")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Toggle("Waterfall", isOn: $showsWaterfall)
+                        Button("Clear", systemImage: "trash") { model.clearTranscript() }
+                            .disabled(model.transcript.isEmpty)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(model.isListening ? "Stop" : "Listen", systemImage: model.isListening ? "stop.fill" : "ear") {
+                        model.toggleListening()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(model.isListening ? Palette.salmon : Palette.teal)
+                }
+            }
+        }
+    }
+
+    // MARK: - Transcript
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if model.transcript.isEmpty {
+                        emptyState
+                    }
+                    ForEach(model.transcript) { line in
+                        TranscriptRow(line: line)
+                            .id(line.id)
+                            .contextMenu { contextMenu(for: line) }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: model.transcript.last?.id) { _, id in
+                if let id { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) } }
+            }
+            .onChange(of: model.transcript.last?.text) { _, _ in
+                if let id = model.transcript.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: model.isListening ? "waveform" : "ear")
+                .font(.largeTitle)
+                .foregroundStyle(.tertiary)
+                .symbolEffect(.variableColor.iterative, isActive: model.isListening)
+            Text(model.isListening ? "Listening" : "Not listening")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text(model.isListening
+                 ? "Messages appear here as their frames arrive. Tap one to call that station."
+                 : "Connect the radio's audio and tap Listen.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 40)
+    }
+
+    @ViewBuilder
+    private func contextMenu(for line: TranscriptLine) -> some View {
+        if let callsign = line.callsign, callsign != model.preferences.callsign {
+            Button("Call \(callsign)", systemImage: "person.wave.2") { model.adopt(callsign: callsign) }
+        }
+        Button("Set frequency to \(Int(line.frequency)) Hz", systemImage: "dial.medium") {
+            model.preferences.txFrequency = line.frequency
+            if !model.preferences.rxFollowsTx { model.preferences.rxFrequency = line.frequency }
+        }
+        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
+    }
+
+    // MARK: - Controls
+
+    private var controls: some View {
+        @Bindable var model = model
+        return VStack(spacing: 8) {
+            if model.isTransmitting {
+                transmitBanner
+            }
+            exchangeStrip
+            macroStrip
+            composeBar
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(.bar)
+    }
+
+    private var transmitBanner: some View {
+        HStack {
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .symbolEffect(.variableColor.iterative)
+            Text("Transmitting")
+                .font(.subheadline.weight(.semibold))
+            if model.audio.queuedTransmissions > 1 {
+                Text("· \(model.audio.queuedTransmissions) queued")
+                    .font(.subheadline)
+            }
+            Spacer()
+            Button("Stop", role: .destructive) { model.stopTransmitting() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(Palette.salmon)
+        }
+        .foregroundStyle(Palette.salmon)
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .background(Palette.salmon.opacity(0.12))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Who is being worked, who is next, and the serial number.
+    private var exchangeStrip: some View {
+        @Bindable var model = model
+        return HStack(spacing: 10) {
+            callField("His call", text: $model.hisCall)
+            callField("Next", text: $model.queuedCall)
+            if model.preferences.exchangeProfile != .fieldDay {
+                Stepper(value: $model.preferences.serialNumber, in: 0...131071) {
+                    Text(String(format: "%03d", model.preferences.serialNumber))
+                        .font(.body.monospacedDigit().weight(.semibold))
+                }
+                .fixedSize()
+                .accessibilityLabel("Serial number")
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func callField(_ label: String, text: Binding<String>) -> some View {
+        TextField(label, text: text)
+            .textInputAutocapitalization(.characters)
+            .autocorrectionDisabled()
+            .font(.body.monospaced())
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 130)
+            .onChange(of: text.wrappedValue) { _, value in
+                let upper = value.uppercased()
+                if upper != value { text.wrappedValue = upper }
+            }
+    }
+
+    /// The eight function keys, each showing what it would send.
+    private var macroStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(0..<8, id: \.self) { index in
+                    MacroButton(
+                        key: "F\(index + 1)",
+                        label: NativeMacro.defaultLabels[index],
+                        preview: model.preview(ofMacro: index),
+                        enabled: model.isListening
+                    ) {
+                        model.sendMacro(index)
+                    }
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private var composeBar: some View {
+        HStack(spacing: 8) {
+            TextField("Message", text: $draft, axis: .vertical)
+                .lineLimit(1...3)
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .font(.body.monospaced())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+                .focused($composing)
+                .onSubmit(sendDraft)
+            Button(action: sendDraft) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 30))
+            }
+            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.isListening)
+            .accessibilityLabel("Send")
+        }
+        .padding(.horizontal)
+        .overlay(alignment: .topTrailing) {
+            if let frames = frameCount(for: draft), frames > 0 {
+                Text("\(frames) frame\(frames == 1 ? "" : "s") · \(String(format: "%.1f", Double(frames) * JTTYProtocol.frameDuration)) s")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 58)
+                    .offset(y: -14)
+            }
+        }
+    }
+
+    private func frameCount(for text: String) -> Int? {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return try? JTTYEncoder.pack(text: text, profile: model.preferences.exchangeProfile).frameCount
+    }
+
+    private func sendDraft() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        model.send(text: text)
+        draft = ""
+    }
+}
+
+/// One function key.
+struct MacroButton: View {
+    let key: String
+    let label: String
+    let preview: String
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(key).font(.caption2.weight(.bold)).foregroundStyle(Palette.teal)
+                    Text(label).font(.caption2).foregroundStyle(.secondary)
+                }
+                Text(preview.isEmpty ? "—" : preview)
+                    .font(.footnote.monospaced())
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.5)
+        .accessibilityLabel("\(key), \(label)")
+        .accessibilityValue(preview)
+    }
+}
+
+/// One line of the transcript.
+struct TranscriptRow: View {
+    let line: TranscriptLine
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
+    }()
+
+    private var isSent: Bool { line.kind == .sent }
+
+    var body: some View {
+        HStack {
+            if isSent { Spacer(minLength: 40) }
+            VStack(alignment: isSent ? .trailing : .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(line.text.isEmpty ? " " : line.text)
+                        .font(.body.monospaced())
+                        .foregroundStyle(isSent ? Color.white : .primary)
+                        .textSelection(.enabled)
+                    if line.isInProgress {
+                        Image(systemName: "ellipsis")
+                            .font(.caption)
+                            .symbolEffect(.variableColor.iterative.reversing)
+                            .foregroundStyle(isSent ? Color.white.opacity(0.8) : Color.secondary)
+                            .accessibilityLabel(isSent ? "Sending" : "Still arriving")
+                    }
+                }
+                HStack(spacing: 6) {
+                    Text(Self.timeFormatter.string(from: line.time))
+                    Text("\(Int(line.frequency)) Hz")
+                    if let snr = line.snr {
+                        Text(String(format: "%+.0f dB", snr))
+                            .foregroundStyle(isSent ? Color.white.opacity(0.8) : Palette.signalColor(for: snr))
+                    }
+                    if line.frameCount > 1 {
+                        Text("\(line.frameCount) frames")
+                    }
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(isSent ? Color.white.opacity(0.8) : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                isSent ? AnyShapeStyle(Palette.teal) : AnyShapeStyle(Color(.secondarySystemGroupedBackground)),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+            )
+            .overlay(alignment: .leading) {
+                if !isSent, line.isOnFrequency {
+                    // On the receive frequency: the one worth reading first.
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Palette.teal)
+                        .frame(width: 3)
+                        .padding(.vertical, 6)
+                        .offset(x: -8)
+                }
+            }
+            if !isSent { Spacer(minLength: 40) }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(isSent ? "Sent" : "Heard") \(line.text)")
+    }
+}

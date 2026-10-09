@@ -1,0 +1,102 @@
+import SwiftUI
+
+struct RootView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Group {
+            if model.preferences.hasCompletedSetup {
+                tabs
+            } else {
+                OnboardingView()
+            }
+        }
+        .animation(.smooth, value: model.preferences.hasCompletedSetup)
+        .tint(Palette.teal)
+        .alert(
+            model.errorMessage ?? "",
+            isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.dismissError() } })
+        ) {
+            Button("OK", role: .cancel) { model.dismissError() }
+        }
+    }
+
+    private var tabs: some View {
+        TabView {
+            OperateView()
+                .tabItem { Label("Operate", systemImage: "antenna.radiowaves.left.and.right") }
+            LogView()
+                .tabItem { Label("Log", systemImage: "book.closed") }
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+        }
+    }
+}
+
+/// First launch: the one thing nothing works without, and the grid for the
+/// grid macro.
+struct OnboardingView: View {
+    @Environment(AppModel.self) private var model
+    @State private var callsign = ""
+    @State private var grid = ""
+    @State private var locator = GridLocator()
+    @FocusState private var focus: Field?
+
+    private enum Field { case callsign, grid }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Callsign", text: $callsign)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .focused($focus, equals: .callsign)
+                        .submitLabel(.next)
+                        .onSubmit { focus = .grid }
+                    HStack {
+                        TextField("Grid square", text: $grid)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .focused($focus, equals: .grid)
+                        Button {
+                            focus = nil
+                            locator.locate { grid = $0 }
+                        } label: {
+                            if locator.isLocating { ProgressView() } else { Label("Locate", systemImage: "location").font(.footnote.weight(.semibold)) }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(locator.isLocating)
+                    }
+                } header: {
+                    Text("Your station")
+                } footer: {
+                    if let error = locator.errorMessage {
+                        Text(error).foregroundStyle(Palette.salmon)
+                    } else {
+                        Text("Your callsign goes in every CQ and every reply. The grid is only used by the grid macro.")
+                    }
+                }
+                Section {
+                    LabeledContent("Wiring", value: "Audio interface")
+                } footer: {
+                    Text("JTTY listens through the audio input and transmits through the audio output. Connect a wired interface between the phone and the radio's data port, and key the transmitter with VOX.")
+                }
+            }
+            .navigationTitle("JTTY")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Start") {
+                        var preferences = model.preferences
+                        preferences.callsign = callsign
+                        preferences.grid = grid
+                        preferences.hasCompletedSetup = true
+                        model.preferences = preferences.normalized()
+                    }
+                    .disabled(callsign.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .onAppear { focus = .callsign }
+    }
+}

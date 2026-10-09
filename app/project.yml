@@ -1,0 +1,81 @@
+name: JTTY
+options:
+  bundleIdPrefix: com.w2asm
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  jttylib:
+    path: ../jttylib
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: 7Q2SS8772K
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  JTTY:
+    type: application
+    platform: iOS
+    sources:
+      - path: JTTY
+    dependencies:
+      - package: jttylib
+        product: JTTYLib
+    info:
+      path: JTTY/Info.plist
+      properties:
+        CFBundleDisplayName: JTTY
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSMicrophoneUsageDescription: >-
+          Listens to the audio from your radio to decode JTTY signals.
+          Connect the radio with a wired audio interface.
+        NSLocationWhenInUseUsageDescription: >-
+          Used once to work out your Maidenhead grid square for the grid macro.
+        ITSAppUsesNonExemptEncryption: false
+        LSApplicationCategoryType: public.app-category.utilities
+        # The log is yours: visible in the Files app and copyable off a
+        # development build.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.amateurradiolog.adif
+            UTTypeDescription: ADIF Log File
+            UTTypeConformsTo:
+              - public.plain-text
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - adi
+                - adif
+        UIBackgroundModes:
+          - audio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.w2asm.jtty
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.0.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+schemes:
+  JTTY:
+    build:
+      targets:
+        JTTY: all
+    run:
+      config: Debug

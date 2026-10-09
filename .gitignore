@@ -1,0 +1,8 @@
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcuserdatastate
+.build/
+.swiftpm/
+app/JTTY.xcodeproj/
