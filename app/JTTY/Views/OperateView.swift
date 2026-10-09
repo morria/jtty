@@ -24,6 +24,16 @@ struct OperateView: View {
                         if !model.preferences.rxFollowsTx { model.preferences.rxFrequency = hz }
                     }
                     .frame(height: 96)
+                    .overlay(alignment: .topTrailing) {
+                        // Input level, so the interface gain can be set
+                        // without guessing. Only meaningful while listening.
+                        if model.isListening {
+                            InputLevelMeter(level: model.audio.inputLevel)
+                                .padding(6)
+                                .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                                .padding(6)
+                        }
+                    }
                     .padding(.horizontal)
                     .padding(.bottom, 6)
                 }
@@ -39,15 +49,6 @@ struct OperateView: View {
                     .presentationDetents([.medium])
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack(spacing: 10) {
-                        InputLevelMeter(level: model.audio.inputLevel)
-                            .opacity(model.isListening ? 1 : 0.3)
-                        Text("\(Int(model.preferences.txFrequency)) Hz")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Toggle("Waterfall", isOn: $showsWaterfall)
