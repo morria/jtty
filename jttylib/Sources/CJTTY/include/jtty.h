@@ -234,6 +234,17 @@ typedef struct {
 jtty_receiver *jtty_receiver_create(void);
 void jtty_receiver_destroy(jtty_receiver *receiver);
 
+/// What the last call to jtty_receiver_process looked at: peaks tried,
+/// peaks whose sync tones checked out, and frames the FEC accepted. Sync
+/// hits without decodes mean JTTY-like signals the decoder cannot read;
+/// no sync hits mean whatever is on the waterfall is not JTTY.
+typedef struct {
+    int candidates;
+    int sync_hits;
+    int decodes;
+} jtty_receiver_stats;
+jtty_receiver_stats jtty_receiver_last_stats(const jtty_receiver *receiver);
+
 /// Search one window of JTTY_CHUNK_SAMPLES mono float samples at 12 kHz.
 /// Returns the number of decodes written to `out` (at most `max_out`).
 int jtty_receiver_process(jtty_receiver *receiver, const float *samples,

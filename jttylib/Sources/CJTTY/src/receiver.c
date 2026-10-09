@@ -71,7 +71,13 @@ struct jtty_receiver {
     int n_ok;
     jtty_decode *out;
     int max_out, nout;
+    jtty_receiver_stats stats;
 };
+
+jtty_receiver_stats jtty_receiver_last_stats(const jtty_receiver *r)
+{
+    return r->stats;
+}
 
 static float db(float x) { return x > 1.259e-10f ? 10.0f * log10f(x) : -99.0f; }
 
@@ -570,10 +576,12 @@ static void process_channel(jtty_receiver *r, const jtty_receive_request *req,
         float snr, pt, pa;
         sync_gate(r, c->xdt, &nsync, &snr, &pt, &pa);
         c->snr = snr;
+        r->stats.candidates++;
         if (getenv("JTTY_DEBUG")) fprintf(stderr, "  cand ch%d t=%.3f f=%.1f coarse(%.3f,%.1f) nsync=%d snr=%.1f\n",
                                           ichan, req->window_start + c->xdt, c->f1, req->window_start + xdtbest, fbest, nsync, snr);
         if (ichan == 0 && (nsync <= 6 || snr < 4.6f)) continue;
         if (ichan != 0 && (nsync <= 8 || snr < 5.0f)) continue;
+        r->stats.sync_hits++;
         if (decode_candidate(r, req, ichan, nsync, pt, pa)) {
             record_ok(r, ichan);
             channel_decoded = true;
@@ -615,6 +623,7 @@ int jtty_receiver_process(jtty_receiver *r, const float *samples,
     r->nout = 0;
     r->ncand = 0;
     r->n_ok = 0;
+    memset(&r->stats, 0, sizeof r->stats);
     r->window_start = req->window_start;
 
     float energy = 0;
@@ -670,5 +679,6 @@ int jtty_receiver_process(jtty_receiver *r, const float *samples,
         for (int i = 1; i < nchan; i++) process_channel(r, req, &channels[i], i);
         r->s0_valid = false;
     }
+    r->stats.decodes = r->nout;
     return r->nout;
 }

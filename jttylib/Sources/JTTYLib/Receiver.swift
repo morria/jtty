@@ -44,6 +44,18 @@ public final class JTTYReceiver {
 
     public var settings = ReceiverSettings()
 
+    /// Running totals for the session.
+    public struct Statistics: Equatable, Sendable {
+        /// Peaks on the sync surface that were examined.
+        public var candidates = 0
+        /// Peaks whose sync tones checked out: JTTY-shaped signals.
+        public var syncHits = 0
+        /// Frames the FEC accepted and the grammar passed.
+        public var decodes = 0
+        public init() {}
+    }
+    public private(set) var statistics = Statistics()
+
     private let receiver: OpaquePointer
     private var buffer: [Float] = []
     /// Session sample index of `buffer[0]`.
@@ -69,6 +81,7 @@ public final class JTTYReceiver {
         base = 0
         nextWindow = 0
         assembler.reset()
+        statistics = Statistics()
     }
 
     /// Add audio. Returns everything decoded as a result, in order.
@@ -150,6 +163,10 @@ public final class JTTYReceiver {
                 }
             }
         }
+        let stats = jtty_receiver_last_stats(receiver)
+        statistics.candidates += Int(stats.candidates)
+        statistics.syncHits += Int(stats.sync_hits)
+        statistics.decodes += Int(stats.decodes)
         return (0..<Int(count)).map { Self.frame(from: decodes[$0]) }
     }
 

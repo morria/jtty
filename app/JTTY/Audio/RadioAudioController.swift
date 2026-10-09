@@ -54,6 +54,8 @@ final class RadioAudioController {
 
     /// Called on the main actor with each receiver event.
     @ObservationIgnored var onEvents: (@MainActor ([JTTYReceiver.Event], Date) -> Void)?
+    /// Called on the main actor as the receiver's running totals change.
+    @ObservationIgnored var onStatistics: (@MainActor (JTTYReceiver.Statistics) -> Void)?
     /// Called on the main actor with a fresh spectrum line, about ten a second.
     @ObservationIgnored var onSpectrum: (@MainActor (SpectrumLine) -> Void)?
     /// Called on the main actor when the last queued transmission finishes.
@@ -84,6 +86,10 @@ final class RadioAudioController {
     private let dsp = DispatchQueue(label: "com.w2asm.jtty.dsp", qos: .userInitiated)
     private var receiver: JTTYReceiver?
     private var spectrum = SpectrumAnalyzer()
+    private let recorder = AudioRecorder()
+    /// Whether the receiver audio is being written to a file.
+    private(set) var isRecording = false
+    private(set) var recordingURL: URL?
 
     // MARK: - Lifecycle
 
@@ -130,7 +136,11 @@ final class RadioAudioController {
         audioEngine.stop()
         audioEngine.detach(player)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        dsp.sync { receiver = nil }
+        dsp.sync {
+            receiver = nil
+            recorder.stop()
+        }
+        isRecording = false
         isRunning = false
         isTransmitting = false
         queuedTransmissions = 0
@@ -183,10 +193,35 @@ final class RadioAudioController {
             if let line = spectrum.append(copy) {
                 Task { @MainActor [weak self] in self?.onSpectrum?(line) }
             }
+            recorder.append(copy)
+            let before = receiver.statistics
             let events = receiver.append(copy)
             if !events.isEmpty {
                 Task { @MainActor [weak self] in self?.onEvents?(events, start) }
             }
+            if receiver.statistics != before {
+                let stats = receiver.statistics
+                Task { @MainActor [weak self] in self?.onStatistics?(stats) }
+            }
+        }
+    }
+
+    // MARK: - Recording
+
+    /// Start or stop writing the receiver audio to Documents as a WAV file.
+    func toggleRecording() throws {
+        if isRecording {
+            dsp.sync { recorder.stop() }
+            isRecording = false
+        } else {
+            guard isRunning else { return }
+            var failure: Error?
+            dsp.sync {
+                do { try recorder.start() } catch { failure = error }
+            }
+            if let failure { throw failure }
+            recordingURL = recorder.url
+            isRecording = true
         }
     }
 

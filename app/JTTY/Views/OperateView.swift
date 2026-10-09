@@ -28,10 +28,18 @@ struct OperateView: View {
                         // Input level, so the interface gain can be set
                         // without guessing. Only meaningful while listening.
                         if model.isListening {
-                            InputLevelMeter(level: model.audio.inputLevel)
-                                .padding(6)
-                                .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-                                .padding(6)
+                            HStack(spacing: 8) {
+                                if model.audio.isRecording {
+                                    Label("REC", systemImage: "record.circle.fill")
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundStyle(Palette.salmon)
+                                        .symbolEffect(.pulse)
+                                }
+                                InputLevelMeter(level: model.audio.inputLevel)
+                            }
+                            .padding(6)
+                            .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                            .padding(6)
                         }
                     }
                     .padding(.horizontal)
@@ -54,6 +62,16 @@ struct OperateView: View {
                         Toggle("Waterfall", isOn: $showsWaterfall)
                         Button("Clear", systemImage: "trash") { model.clearTranscript() }
                             .disabled(model.transcript.isEmpty)
+                        Toggle(isOn: Binding(get: { model.audio.isRecording }, set: { _ in model.toggleRecording() })) {
+                            Label("Record audio", systemImage: "record.circle")
+                        }
+                        .disabled(!model.isListening)
+                        Section("Receiver this session") {
+                            // Sync hits without decodes are JTTY frames the
+                            // decoder could not read; none at all means what
+                            // is on the waterfall is not JTTY.
+                            Text("\(model.statistics.syncHits) sync hits · \(model.statistics.decodes) frames decoded")
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }

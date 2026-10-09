@@ -45,6 +45,8 @@ final class AppModel {
     let logbook = Logbook()
 
     private(set) var transcript: [TranscriptLine] = []
+    /// What the receiver has looked at this session.
+    private(set) var statistics = JTTYReceiver.Statistics()
     private(set) var spectrumLines: [RadioAudioController.SpectrumLine] = []
     static let spectrumHistory = 90
 
@@ -66,6 +68,7 @@ final class AppModel {
         applyPreferences()
         audio.onEvents = { [weak self] events, start in self?.handle(events, sessionStart: start) }
         audio.onSpectrum = { [weak self] line in self?.handle(line) }
+        audio.onStatistics = { [weak self] stats in self?.statistics = stats }
         audio.onTransmitFinished = { [weak self] in self?.transmissionsFinished() }
         #if DEBUG
         if CommandLine.arguments.contains("-demo") { seedDemo() }
@@ -196,6 +199,7 @@ final class AppModel {
             UIApplication.shared.isIdleTimerDisabled = false
         } else {
             do {
+                statistics = JTTYReceiver.Statistics()
                 try audio.start()
                 // A contact should not finish behind a locked screen.
                 UIApplication.shared.isIdleTimerDisabled = true
@@ -231,6 +235,10 @@ final class AppModel {
 
     func clearTranscript() {
         transcript.removeAll()
+    }
+
+    func toggleRecording() {
+        do { try audio.toggleRecording() } catch { report(error) }
     }
 
     // MARK: - Transmitting
