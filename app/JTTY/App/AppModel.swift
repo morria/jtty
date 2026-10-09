@@ -293,28 +293,47 @@ final class AppModel {
     /// Pick the quietest spot near the transmit frequency from the last few
     /// seconds of spectrum. Only before a CQ: once a contact is under way
     /// the frequency stays put.
+    ///
+    /// Quiet is judged against the local noise floor, not in absolute terms.
+    /// The radio's audio passband rolls off at its edges, so the edges always
+    /// look quietest and an absolute choice walks the station down to 300 Hz
+    /// where the filter skirt is. What matters is a slot with nothing in it
+    /// above the floor around it, and the search stays within 400 to 2600 Hz.
     func chooseClearFrequency() {
         let recent = spectrumLines.suffix(30)
         guard recent.count >= 10, let width = recent.first?.magnitudes.count else { return }
         let binHz = JTTYProtocol.sampleRate / Double(SpectrumAnalyzer.size)
         let minHz = RadioAudioController.SpectrumLine.minFrequency
-        var floor = [Float](repeating: 0, count: width)
+        var level = [Float](repeating: 0, count: width)
         for line in recent where line.magnitudes.count == width {
-            for i in 0..<width { floor[i] += line.magnitudes[i] }
+            for i in 0..<width { level[i] += line.magnitudes[i] / Float(recent.count) }
+        }
+        // Local floor: the median over 400 Hz either side.
+        let half = Int(400 / binHz)
+        var floor = [Float](repeating: 0, count: width)
+        for i in 0..<width {
+            let window = level[max(0, i - half)...min(width - 1, i + half)].sorted()
+            floor[i] = window[window.count / 2]
         }
         let slot = Int(160 / binHz)
         let tx = preferences.txFrequency
-        let low = max(300, tx - 300), high = min(2600, tx + 300)
-        var best: (start: Int, energy: Float)?
+        let low = max(400, tx - 300), high = min(2600, tx + 300)
+        var best: (start: Int, excess: Float)?
+        var current: Float?
         var start = Int((low - minHz) / binHz)
         let last = Int((high - minHz) / binHz) - slot
         while start <= last, start + slot <= width {
-            var energy: Float = 0
-            for i in start..<start + slot { energy += pow(10, floor[i] / 10) }
-            if best == nil || energy < best!.energy { best = (start, energy) }
+            // Energy above the floor, summed over the slot.
+            var excess: Float = 0
+            for i in start..<start + slot { excess += pow(10, max(0, level[i] - floor[i]) / 10) - 1 }
+            let hz = minHz + Double(start) * binHz
+            if abs(hz - tx) < binHz * 2 { current = excess }
+            if best == nil || excess < best!.excess { best = (start, excess) }
             start += 2
         }
         guard let best else { return }
+        // Already clear: stay put rather than wander.
+        if let current, current <= Float(slot) * 0.26 { return }
         let hz = ((minHz + Double(best.start) * binHz + 15) / 10).rounded() * 10
         if abs(hz - tx) >= 20 { preferences.txFrequency = hz }
     }

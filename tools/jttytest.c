@@ -276,6 +276,30 @@ static void loop(float snr_db)
     printf("SNR %.1f dB: %d/%d\n", snr_db, good, trials);
 }
 
+/// Minutes of noise with occasional wideband bursts, to count false decodes.
+static void noise(int minutes)
+{
+    long total = 12000L * 60 * minutes;
+    float *audio = malloc(sizeof(float) * (size_t)total);
+    srand(7);
+    for (long i = 0; i < total; i++) audio[i] = (float)(0.1 * gauss());
+    // Bursts: 0.2-1.5 s, 50-150 Hz wide, every few seconds.
+    for (long t = 12000; t < total - 24000; t += 12000 * (2 + rand() % 5)) {
+        double f = 300 + rand() % 2300, bw = 50 + rand() % 100;
+        long len = 2400 + rand() % 15600;
+        double phase = 0, fm = 0;
+        for (long i = 0; i < len && t + i < total; i++) {
+            fm += 0.02 * (gauss() - fm);
+            phase += 2 * M_PI * (f + bw * fm) / 12000;
+            audio[t + i] += (float)(0.6 * sin(phase));
+        }
+    }
+    char lines[64][96];
+    int n = run_receiver((buffer){ audio, total }, 1500, 100, true, true, lines, 64);
+    printf("%d false decodes in %d minutes of noise\n", n, minutes);
+    free(audio);
+}
+
 static buffer read_wav(const char *path)
 {
     buffer b = { NULL, 0 };
@@ -301,6 +325,7 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "vectors") == 0) vectors();
     else if (strcmp(argv[1], "pack") == 0) pack();
     else if (strcmp(argv[1], "loop") == 0) loop(argc > 2 ? atof(argv[2]) : 0);
+    else if (strcmp(argv[1], "noise") == 0) noise(argc > 2 ? atoi(argv[2]) : 5);
     else if (strcmp(argv[1], "probe") == 0) {
         extern void probe(buffer, double, double);
         buffer b = read_wav(argv[2]);

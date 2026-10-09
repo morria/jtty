@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var locator = GridLocator()
+    @FocusState private var editingNumber: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -16,6 +17,15 @@ struct SettingsView: View {
                 about
             }
             .navigationTitle("Settings")
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                // The number pad has no return key, so this is the only way
+                // off the dial-frequency field.
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { editingNumber = false }
+                }
+            }
         }
     }
 
@@ -49,12 +59,13 @@ struct SettingsView: View {
             }
             LabeledContent("Dial frequency") {
                 HStack(spacing: 4) {
-                    TextField("14080000", value: model.preferences.dialFrequency, format: .number.grouping(.never))
-                        .keyboardType(.numberPad)
+                    TextField("14080.0", value: model.preferences.dialKilohertz, format: .number.grouping(.never).precision(.fractionLength(0...3)))
+                        .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .monospacedDigit()
+                        .focused($editingNumber)
                         .frame(maxWidth: 120)
-                    Text("Hz").foregroundStyle(.secondary)
+                    Text("kHz").foregroundStyle(.secondary)
                 }
             }
         } header: {

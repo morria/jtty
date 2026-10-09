@@ -34,6 +34,11 @@
 #define MAXCAND 100
 #define MAX_CH0_OK 16
 #define NFILT (2 * NSS)
+// Data-symbol SNR below which a CRC-clean decode is treated as a false
+// accept. Set from measurement: see tools/jttytest.c "noise" and "loop".
+#ifndef JTTY_MIN_DATA_SNR
+#define JTTY_MIN_DATA_SNR 3.5f
+#endif
 
 static const float DF2 = FS6 / NFFT;        // 0.732 Hz per bin
 static const float DT6 = 1.0f / FS6;
@@ -415,16 +420,27 @@ static bool decode_candidate(jtty_receiver *r, const jtty_receive_request *req,
     if (!jtty_unpack_frame(payload, text, &trailing_sep, &eom)) return false;
 
     // SNR over the whole frame: power in the expected tone against the
-    // other three.
+    // other three. The data symbols are also judged on their own: the sync
+    // already passed a gate, so only they say whether the decoded word is
+    // what was sent. A real frame at the decoding threshold puts several dB
+    // more energy in its tones than in the others; a false decode is random
+    // against the data and shows about 0 dB.
     uint8_t expected[JTTY_DATA_SYMBOLS];
     jtty_encode_frame(payload, expected);
+    float pt_data = 0, pa_data = 0;
     for (int s = 0; s < JTTY_DATA_SYMBOLS; s++) {
         for (int t = 0; t < 4; t++) {
             float p = z[s][t][0] * z[s][t][0] + z[s][t][1] * z[s][t][1];
-            pa += p;
-            if (t == expected[s]) pt += p;
+            pa_data += p;
+            if (t == expected[s]) pt_data += p;
         }
     }
+    float pn_data = (pa_data - pt_data) / 3;
+    float data_snr = pn_data > 0 ? db(pt_data / pn_data) : 0;
+    if (getenv("JTTY_DEBUG")) fprintf(stderr, "  decode data-snr %.1f dB sync-snr %.1f dB text %s\n", data_snr, c->snr, text);
+    if (data_snr < JTTY_MIN_DATA_SNR) return false;
+    pt += pt_data;
+    pa += pa_data;
     float pn = (pa - pt) / 3;
     float snrdb = pn > 0 ? db(pt / pn) : c->snr;
     c->snr = snrdb;

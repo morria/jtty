@@ -15,6 +15,12 @@ struct Preferences: Codable, Equatable, Sendable {
     /// The radio's dial frequency, Hz, for the log.
     var dialFrequency: Int = Band.m20.suggestedDialFrequency
 
+    /// The same in kHz, which is how a dial reads.
+    var dialKilohertz: Double {
+        get { Double(dialFrequency) / 1000 }
+        set { dialFrequency = Int((newValue * 1000).rounded()) }
+    }
+
     /// Audio frequency of tone 0 when transmitting, Hz.
     var txFrequency: Double = 1500
     /// Where to listen most carefully, Hz, and how far either side.

@@ -320,6 +320,7 @@ struct MacroButton: View {
 /// setting to the radio, and a wrong band is the commonest logging error.
 struct BandSheet: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var editingNumber: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -335,12 +336,13 @@ struct BandSheet: View {
                     }
                     LabeledContent("Dial frequency") {
                         HStack(spacing: 4) {
-                            TextField("14080000", value: $model.preferences.dialFrequency, format: .number.grouping(.never))
-                                .keyboardType(.numberPad)
+                            TextField("14080.0", value: $model.preferences.dialKilohertz, format: .number.grouping(.never).precision(.fractionLength(0...3)))
+                                .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .monospacedDigit()
+                                .focused($editingNumber)
                                 .frame(maxWidth: 120)
-                            Text("Hz").foregroundStyle(.secondary)
+                            Text("kHz").foregroundStyle(.secondary)
                         }
                     }
                 } footer: {
@@ -349,7 +351,12 @@ struct BandSheet: View {
             }
             .navigationTitle("Which band?")
             .navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
             .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { editingNumber = false }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { model.cancelBandConfirmation() }
                 }
