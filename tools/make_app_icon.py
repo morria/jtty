@@ -3,13 +3,10 @@
 
     python3 tools/make_app_icon.py app/JTTY/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
-Same tile and palette as the other shack apps: dark slate, with the mark in
-cream, teal, sand and salmon. The mark is a JTTY transmission as the
-waterfall shows it: four tones, so four columns across, with a frame of
-symbols hopping between them down the tile. The first thirteen symbols of
-every frame are the sync pattern 0223003213120, and that is what is drawn,
-because it is the one thing every JTTY signal has in common and the thing
-the receiver looks for first. The cream wordmark sits under it like FT8's.
+Three message tiles on the dark slate shared with the other shack apps:
+teal, sand and salmon, each carrying a short run of dots and dashes in the
+slate. Keyboard-to-keyboard on the air is a conversation, and this is the
+family's picture of one.
 """
 
 import math
@@ -21,29 +18,25 @@ SIZE = 1024
 
 BG_TOP = (0.141, 0.192, 0.231)
 BG_BOTTOM = (0.098, 0.137, 0.169)
-CREAM = (0.949, 0.906, 0.827)
+INK = (0.125, 0.172, 0.208)
 TEAL = (0.388, 0.702, 0.651)
 SAND = (0.918, 0.788, 0.435)
 SALMON = (0.871, 0.506, 0.384)
 
-# The sync sequence, one dot per symbol, tone 0..3 left to right.
-SYNC = [0, 2, 2, 3, 0, 0, 3, 2, 1, 3, 1, 2, 0]
-TONE_COLORS = [SALMON, SAND, CREAM, TEAL]
+# Tiles as (left, top, right, bottom, colour, glyphs). Glyph runs are strings
+# of '.' and '-', centred in the tile.
+TILES = [
+    (186, 212, 584, 392, TEAL, "-.-"),
+    (390, 400, 776, 578, SAND, "..."),
+    (204, 592, 450, 770, SALMON, "-"),
+]
+TILE_RADIUS = 64.0
+DOT = 46.0            # glyph height and dot diameter
+DASH = 92.0           # dash length
+GLYPH_GAP = 26.0
 
-DOT = 64.0            # dot diameter
-COL_PITCH = 112.0     # distance between tone columns
-ROW_PITCH = 44.0      # distance between symbols down the tile
-MARK_TOP = 140.0
-
-TEXT = "JTTY"
-TEXT_TOP = 740.0
-TEXT_HEIGHT = 170.0
-TEXT_WIDTH = 46.0
-TEXT_GAP = 60.0
-
-SHADOW_PASSES = [(30.0, 0.045), (20.0, 0.05), (12.0, 0.06), (6.0, 0.07)]
-SHADOW_OFFSET = 8.0
-GLOW_PASSES = [(110.0, 0.014), (80.0, 0.018), (56.0, 0.022), (36.0, 0.027), (20.0, 0.032), (10.0, 0.036)]
+SHADOW_PASSES = [(34.0, 0.05), (22.0, 0.06), (12.0, 0.07), (5.0, 0.08)]
+SHADOW_OFFSET = 12.0
 
 
 def clamp(v, lo=0.0, hi=1.0):
@@ -71,32 +64,24 @@ class Canvas:
         p[o + 1] += (color[1] - p[o + 1]) * alpha
         p[o + 2] += (color[2] - p[o + 2]) * alpha
 
-    def capsule(self, p0, p1, radius, color, alpha=1.0):
-        x0, y0 = p0
-        x1, y1 = p1
-        left = max(0, int(min(x0, x1) - radius - 2))
-        right = min(self.size - 1, int(max(x0, x1) + radius + 2))
-        top = max(0, int(min(y0, y1) - radius - 2))
-        bottom = min(self.size - 1, int(max(y0, y1) + radius + 2))
-        dx, dy = x1 - x0, y1 - y0
-        l2 = dx * dx + dy * dy
+    def rounded_rect(self, x0, y0, x1, y1, radius, color, alpha=1.0, grow=0.0):
+        """Filled rounded rectangle, antialiased over one pixel."""
+        x0, y0, x1, y1 = x0 - grow, y0 - grow, x1 + grow, y1 + grow
+        radius = radius + grow
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        hx, hy = (x1 - x0) / 2 - radius, (y1 - y0) / 2 - radius
+        left, right = max(0, int(x0) - 1), min(self.size - 1, int(x1) + 1)
+        top, bottom = max(0, int(y0) - 1), min(self.size - 1, int(y1) + 1)
         for y in range(top, bottom + 1):
             py = y + 0.5
+            qy = abs(py - cy) - hy
             for x in range(left, right + 1):
                 px = x + 0.5
-                t = clamp(((px - x0) * dx + (py - y0) * dy) / l2) if l2 > 1e-9 else 0.0
-                ox, oy = px - (x0 + t * dx), py - (y0 + t * dy)
-                c = clamp(radius - math.hypot(ox, oy) + 0.5)
+                qx = abs(px - cx) - hx
+                outside = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius
+                c = clamp(0.5 - outside)
                 if c > 0:
                     self.blend(x, y, color, c * alpha)
-
-    def stroke(self, points, width, color, alpha=1.0):
-        r = width / 2
-        if len(points) == 1:
-            self.capsule(points[0], points[0], r, color, alpha)
-            return
-        for i in range(len(points) - 1):
-            self.capsule(points[i], points[i + 1], r, color, alpha)
 
     def write_png(self, path):
         rows = bytearray()
@@ -119,89 +104,30 @@ class Canvas:
         return len(png)
 
 
-def mark():
-    """The sync pattern down the tile, one dot per symbol.
-
-    Consecutive symbols on the same tone merge into a bar, as they do on a
-    waterfall, which is also what keeps thirteen dots from reading as
-    confetti: the 22 and 00 pairs become two short bars among the dots.
-    """
-    left = (SIZE - 3 * COL_PITCH) / 2
-    shapes = []
-    i = 0
-    while i < len(SYNC):
-        tone = SYNC[i]
-        j = i
-        while j + 1 < len(SYNC) and SYNC[j + 1] == tone:
-            j += 1
-        x = left + tone * COL_PITCH
-        y0 = MARK_TOP + i * ROW_PITCH + DOT / 2
-        y1 = MARK_TOP + j * ROW_PITCH + DOT / 2
-        shapes.append(([(x, y0), (x, y1)], DOT, TONE_COLORS[tone], tone == 2))
-        i = j + 1
-    return shapes
-
-
-def letter_j(x, top, h):
-    """A stem with a hook: no top bar, which crowds the T next to it."""
-    w = h * 0.52
-    return [
-        [(x + w, top), (x + w, top + h * 0.68)],
-        ellipse((x + w * 0.5, top + h * 0.68), w * 0.5, h * 0.32, 60, 180, 360),
-    ], w
-
-
-def letter_t(x, top, h):
-    w = h * 0.60
-    return [[(x, top), (x + w, top)], [(x + w / 2, top), (x + w / 2, top + h)]], w
-
-
-def letter_y(x, top, h):
-    w = h * 0.62
-    return [
-        [(x, top), (x + w / 2, top + h * 0.5)],
-        [(x + w, top), (x + w / 2, top + h * 0.5)],
-        [(x + w / 2, top + h * 0.5), (x + w / 2, top + h)],
-    ], w
-
-
-def ellipse(c, sx, sy, steps=90, start=0.0, end=360.0):
-    pts = []
-    for i in range(steps + 1):
-        a = math.radians(start + (end - start) * i / steps)
-        pts.append((c[0] + sx * math.cos(a), c[1] - sy * math.sin(a)))
-    return pts
-
-
-LETTERS = {"J": letter_j, "T": letter_t, "Y": letter_y}
-
-
-def wordmark(text, top, h, gap):
-    widths = [LETTERS[c](0.0, top, h)[1] for c in text]
-    total = sum(widths) + gap * (len(text) - 1)
-    cursor = (SIZE - total) / 2
-    paths = []
-    for c, w in zip(text, widths):
-        shapes, _ = LETTERS[c](cursor, top, h)
-        paths.extend(shapes)
-        cursor += w + gap
-    return paths
+def glyph_boxes(tile):
+    x0, y0, x1, y1, _, run = tile
+    widths = [DASH if g == "-" else DOT for g in run]
+    total = sum(widths) + GLYPH_GAP * (len(run) - 1)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    cursor = cx - total / 2
+    boxes = []
+    for w in widths:
+        boxes.append((cursor, cy - DOT / 2, cursor + w, cy + DOT / 2))
+        cursor += w + GLYPH_GAP
+    return boxes
 
 
 def main(path):
     canvas = Canvas(SIZE)
-    shapes = [(pts, width, color, glow) for pts, width, color, glow in mark()]
-    for pts in wordmark(TEXT, TEXT_TOP, TEXT_HEIGHT, TEXT_GAP):
-        shapes.append((pts, TEXT_WIDTH, CREAM, False))
-    for pts, width, _, _ in shapes:
+    for tile in TILES:
+        x0, y0, x1, y1, _, _ = tile
         for grow, a in SHADOW_PASSES:
-            canvas.stroke([(x, y + SHADOW_OFFSET) for x, y in pts], width + grow, (0, 0, 0), a)
-    for pts, width, color, glow in shapes:
-        if glow:
-            for grow, a in GLOW_PASSES:
-                canvas.stroke(pts, width + grow, color, a)
-    for pts, width, color, _ in shapes:
-        canvas.stroke(pts, width, color)
+            canvas.rounded_rect(x0, y0 + SHADOW_OFFSET, x1, y1 + SHADOW_OFFSET, TILE_RADIUS, (0, 0, 0), a, grow)
+    for tile in TILES:
+        x0, y0, x1, y1, color, _ = tile
+        canvas.rounded_rect(x0, y0, x1, y1, TILE_RADIUS, color)
+        for gx0, gy0, gx1, gy1 in glyph_boxes(tile):
+            canvas.rounded_rect(gx0, gy0, gx1, gy1, DOT / 2, INK)
     print(f"wrote {path} ({canvas.write_png(path)} bytes)")
 
 

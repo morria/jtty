@@ -3,7 +3,8 @@ import Foundation
 /// What the operator's station is, for filling in a function-key template.
 public struct MacroContext: Equatable, Sendable {
     public var myCall: String
-    public var hisCall: String
+    /// The station being worked.
+    public var theirCall: String
     public var queuedCall: String
     public var serialNumber: Int
     public var grid: String
@@ -12,10 +13,10 @@ public struct MacroContext: Equatable, Sendable {
     /// (`CA`, or a serial if empty).
     public var configuredExchange: String
 
-    public init(myCall: String, hisCall: String = "", queuedCall: String = "", serialNumber: Int = 1,
+    public init(myCall: String, theirCall: String = "", queuedCall: String = "", serialNumber: Int = 1,
                 grid: String = "", profile: ExchangeProfile = .none, configuredExchange: String = "") {
         self.myCall = myCall
-        self.hisCall = hisCall
+        self.theirCall = theirCall
         self.queuedCall = queuedCall
         self.serialNumber = serialNumber
         self.grid = grid
@@ -36,8 +37,9 @@ public enum CompiledMacro: Equatable, Sendable {
 
 /// The eight shipped templates and the placeholders they use.
 ///
-/// `%M` my call, `%H` his call, `%Q` the queued call, `%E` the exchange,
-/// `%N` the serial number, `%G` my grid.
+/// `%M` my call, `%H` the call of the station being worked, `%Q` the queued
+/// call, `%E` the exchange, `%N` the serial number, `%G` my grid. The order
+/// is WSJT-X's F1 to F8.
 public enum NativeMacro {
 
     public static let defaultTemplates = [
@@ -51,7 +53,7 @@ public enum NativeMacro {
         "%E",
     ]
 
-    public static let defaultLabels = ["CQ", "Exch", "TU CQ", "My call", "His call", "TU now", "AGN?", "Exch only"]
+    public static let defaultLabels = ["CQ", "Exchange", "TU, CQ", "My call", "Their call", "TU, next", "Again?", "Exchange only"]
 
     /// Whitespace-normalised, upper-cased, so a template typed with an extra
     /// space still counts as the native one.
@@ -65,17 +67,17 @@ public enum NativeMacro {
         case "CQ %M CQ":
             return callAtom(.cq, context.myCall, "your callsign")
         case "%H %E", "%H 599 %N":
-            return combine(callAtom(.call, context.hisCall, "his callsign"), exchange(context))
+            return combine(callAtom(.call, context.theirCall, "their callsign"), exchange(context))
         case "%H TU CQ %M CQ":
-            return combine(callAtom(.callTu, context.hisCall, "his callsign"), callAtom(.cq, context.myCall, "your callsign"))
+            return combine(callAtom(.callTu, context.theirCall, "their callsign"), callAtom(.cq, context.myCall, "your callsign"))
         case "%M":
             return callAtom(.call, context.myCall, "your callsign")
         case "%H":
-            return callAtom(.call, context.hisCall, "his callsign")
+            return callAtom(.call, context.theirCall, "their callsign")
         case "TU NOW %Q %E", "TU NOW %Q 599 %N":
             return combine(callAtom(.tuNow, context.queuedCall, "the queued callsign"), exchange(context))
         case "%H AGN?":
-            return callAtom(.agn, context.hisCall, "his callsign")
+            return callAtom(.agn, context.theirCall, "their callsign")
         case "%E", "599 %N":
             return exchange(context)
         case "%G":
@@ -96,7 +98,7 @@ public enum NativeMacro {
         let exchangeText: String
         if case .native(_, let rendered) = exchange(context) { exchangeText = rendered } else { exchangeText = "" }
         for (token, value) in [
-            ("%M", context.myCall), ("%H", context.hisCall), ("%Q", context.queuedCall),
+            ("%M", context.myCall), ("%H", context.theirCall), ("%Q", context.queuedCall),
             ("%E", exchangeText), ("%N", String(format: "%03d", context.serialNumber)), ("%G", context.grid),
         ] {
             text = text.replacingOccurrences(of: token, with: value, options: .caseInsensitive)

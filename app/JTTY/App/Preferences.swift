@@ -22,6 +22,14 @@ struct Preferences: Codable, Equatable, Sendable {
     var rxTolerance: Double = 100
     /// Keep the receive frequency on the transmit frequency.
     var rxFollowsTx = true
+    /// Before calling CQ, move to the quietest spot near the transmit
+    /// frequency rather than sitting wherever the slider was left.
+    var choosesClearFrequency = true
+    /// When the station last transmitted. The band setting is only trusted
+    /// for an hour after that: nothing ties it to the radio, and a radio
+    /// retuned during a break is how a morning ends up logged on the wrong
+    /// band.
+    var lastTransmitAt: Date?
     /// Also look for signals right across the passband, not only around the
     /// receive frequency and the calling area.
     var searchesWholePassband = true
@@ -46,6 +54,12 @@ struct Preferences: Codable, Equatable, Sendable {
 
     var canTransmit: Bool {
         !callsign.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Whether the band needs confirming before the next transmission.
+    var bandIsStale: Bool {
+        guard let lastTransmitAt else { return true }
+        return Date().timeIntervalSince(lastTransmitAt) > 3600
     }
 
     func normalized() -> Preferences {

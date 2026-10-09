@@ -34,6 +34,10 @@ struct OperateView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("JTTY")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $model.isConfirmingBand) {
+                BandSheet()
+                    .presentationDetents([.medium])
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HStack(spacing: 10) {
@@ -116,7 +120,9 @@ struct OperateView: View {
     @ViewBuilder
     private func contextMenu(for line: TranscriptLine) -> some View {
         if let callsign = line.callsign, callsign != model.preferences.callsign {
-            Button("Call \(callsign)", systemImage: "person.wave.2") { model.adopt(callsign: callsign) }
+            Button("Call \(callsign)", systemImage: "person.wave.2") {
+                model.adopt(callsign: callsign, frequency: line.kind == .received ? line.frequency : nil)
+            }
         }
         Button("Set frequency to \(Int(line.frequency)) Hz", systemImage: "dial.medium") {
             model.preferences.txFrequency = line.frequency
@@ -169,7 +175,7 @@ struct OperateView: View {
     private var exchangeStrip: some View {
         @Bindable var model = model
         return HStack(spacing: 10) {
-            callField("His call", text: $model.hisCall)
+            callField("Their call", text: $model.theirCall)
             callField("Next", text: $model.queuedCall)
             if model.preferences.exchangeProfile != .fieldDay {
                 Stepper(value: $model.preferences.serialNumber, in: 0...131071) {
@@ -196,16 +202,14 @@ struct OperateView: View {
             }
     }
 
-    /// The eight function keys, each showing what it would send.
+    /// The eight quick messages, each showing what it would send.
     private var macroStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(0..<8, id: \.self) { index in
                     MacroButton(
-                        key: "F\(index + 1)",
                         label: NativeMacro.defaultLabels[index],
-                        preview: model.preview(ofMacro: index),
-                        enabled: model.isListening
+                        preview: model.preview(ofMacro: index)
                     ) {
                         model.sendMacro(index)
                     }
@@ -231,7 +235,7 @@ struct OperateView: View {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 30))
             }
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.isListening)
+            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
             .accessibilityLabel("Send")
         }
         .padding(.horizontal)
@@ -259,21 +263,18 @@ struct OperateView: View {
     }
 }
 
-/// One function key.
+/// One quick message: what it is for, and exactly what it would send.
 struct MacroButton: View {
-    let key: String
     let label: String
     let preview: String
-    let enabled: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(key).font(.caption2.weight(.bold)).foregroundStyle(Palette.teal)
-                    Text(label).font(.caption2).foregroundStyle(.secondary)
-                }
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Palette.teal)
                 Text(preview.isEmpty ? "—" : preview)
                     .font(.footnote.monospaced())
                     .lineLimit(1)
@@ -281,13 +282,57 @@ struct MacroButton: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.5)
-        .accessibilityLabel("\(key), \(label)")
+        .accessibilityLabel(label)
         .accessibilityValue(preview)
+    }
+}
+
+/// Asked before the first transmission in a while: nothing ties the band
+/// setting to the radio, and a wrong band is the commonest logging error.
+struct BandSheet: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Band", selection: $model.preferences.band) {
+                        ForEach(Band.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: model.preferences.band) { _, band in
+                        model.preferences.dialFrequency = band.suggestedDialFrequency
+                    }
+                    LabeledContent("Dial frequency") {
+                        HStack(spacing: 4) {
+                            TextField("14080000", value: $model.preferences.dialFrequency, format: .number.grouping(.never))
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .monospacedDigit()
+                                .frame(maxWidth: 120)
+                            Text("Hz").foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text("It has been a while since the last transmission. Check the radio is still where the log thinks it is.")
+                }
+            }
+            .navigationTitle("Which band?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { model.cancelBandConfirmation() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Transmit") { model.confirmBand() }
+                }
+            }
+        }
+        .interactiveDismissDisabled()
     }
 }
 

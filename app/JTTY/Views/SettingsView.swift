@@ -76,6 +76,7 @@ struct SettingsView: View {
                 }
                 Slider(value: model.preferences.txFrequency, in: 300...2600, step: 10)
             }
+            Toggle("Choose a clear frequency", isOn: model.preferences.choosesClearFrequency)
             Toggle("Receive on the transmit frequency", isOn: model.preferences.rxFollowsTx)
             if !model.wrappedValue.preferences.rxFollowsTx {
                 VStack(alignment: .leading) {
@@ -102,6 +103,11 @@ struct SettingsView: View {
             Text("Audio")
         } footer: {
             Text("""
+                With a clear frequency chosen, calling CQ first moves the transmit frequency to the \
+                quietest spot within 300 Hz, judged from the last few seconds of the waterfall. \
+                Answering a station always moves onto their frequency. Turn it off to stay exactly \
+                where the slider is.
+
                 Signals within the tolerance of the receive frequency are searched hardest and marked \
                 in the transcript. With the whole passband on, everything from 200 to 2800 Hz is \
                 decoded as well, which costs some battery.
@@ -160,10 +166,10 @@ struct SettingsView: View {
         Section {
             ForEach(0..<8, id: \.self) { index in
                 HStack {
-                    Text("F\(index + 1)")
-                        .font(.caption.weight(.bold))
+                    Text(NativeMacro.defaultLabels[index])
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(Palette.teal)
-                        .frame(width: 24, alignment: .leading)
+                        .frame(width: 92, alignment: .leading)
                     TextField(NativeMacro.defaultTemplates[index], text: model.preferences.macros[index])
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
@@ -172,9 +178,9 @@ struct SettingsView: View {
             }
             Button("Restore defaults") { model.wrappedValue.preferences.macros = NativeMacro.defaultTemplates }
         } header: {
-            Text("Function keys")
+            Text("Quick messages")
         } footer: {
-            Text("%M your call, %H his call, %Q the next station, %E the exchange, %N the serial, %G your grid. The eight standard templates go out as compact native frames; anything else is sent as text.")
+            Text("%M is your call, %H the station you are working, %Q the next one, %E the exchange, %N the serial number, %G your grid. These are WSJT-X's F1 to F8 in the same order. The eight standard templates go out as compact native frames; anything else is sent as text.")
         }
     }
 

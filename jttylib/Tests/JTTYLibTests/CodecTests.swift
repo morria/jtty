@@ -67,7 +67,7 @@ final class CodecTests: XCTestCase {
     }
 
     func testMacros() throws {
-        let context = MacroContext(myCall: "K1ABC", hisCall: "W9XYZ", queuedCall: "W7UVW", serialNumber: 107)
+        let context = MacroContext(myCall: "K1ABC", theirCall: "W9XYZ", queuedCall: "W7UVW", serialNumber: 107)
         func text(_ template: String) -> String? {
             if case .native(_, let text) = NativeMacro.compile(template, context: context) { return text }
             return nil
@@ -84,7 +84,7 @@ final class CodecTests: XCTestCase {
             XCTFail("not native")
         }
         XCTAssertEqual(NativeMacro.compile("%H DE %M K", context: context), .literal("W9XYZ DE K1ABC K"))
-        if case .invalid = NativeMacro.compile("%H", context: MacroContext(myCall: "K1ABC")) {} else { XCTFail("empty his call accepted") }
+        if case .invalid = NativeMacro.compile("%H", context: MacroContext(myCall: "K1ABC")) {} else { XCTFail("empty call accepted") }
         var fieldDay = context
         fieldDay.profile = .fieldDay
         fieldDay.configuredExchange = "1D EMA"

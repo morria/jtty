@@ -49,8 +49,12 @@ final class AppModel {
     static let spectrumHistory = 90
 
     /// The station being worked and the one waiting.
-    var hisCall = ""
+    var theirCall = ""
     var queuedCall = ""
+
+    /// A transmission waiting on the band being confirmed.
+    private var pendingSend: (() -> Void)?
+    var isConfirmingBand = false
 
     var errorMessage: String?
     private var nextSentID: Int64 = -1
@@ -79,7 +83,9 @@ final class AppModel {
         if prefs.callsign.isEmpty { prefs.callsign = "W2ASM" }
         prefs.hasCompletedSetup = true
         preferences = prefs
-        hisCall = "W9XYZ"
+        theirCall = "W9XYZ"
+        prefs.lastTransmitAt = Date()
+        preferences = prefs
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("selftest.log")
         var lines: [String] = []
         func note(_ text: String) {
@@ -115,8 +121,9 @@ final class AppModel {
         prefs.grid = "FN20"
         prefs.hasCompletedSetup = true
         prefs.serialNumber = 107
+        prefs.lastTransmitAt = Date()
         preferences = prefs
-        hisCall = "W9XYZ"
+        theirCall = "W9XYZ"
         let now = Date()
         if logbook.entries.isEmpty, CommandLine.arguments.contains("-demolog") {
             logbook.add(LogEntry(callsign: "K1ABC", time: now.addingTimeInterval(-900), band: .m20, frequency: 14_081_500,
@@ -169,7 +176,7 @@ final class AppModel {
 
     var macroContext: MacroContext {
         MacroContext(
-            myCall: preferences.callsign, hisCall: hisCall, queuedCall: queuedCall,
+            myCall: preferences.callsign, theirCall: theirCall, queuedCall: queuedCall,
             serialNumber: preferences.serialNumber, grid: preferences.grid,
             profile: preferences.exchangeProfile, configuredExchange: preferences.configuredExchange
         )
@@ -244,7 +251,7 @@ final class AppModel {
         }
     }
 
-    /// Send function key `index` (0-based).
+    /// Send quick message `index` (0-based).
     func sendMacro(_ index: Int) {
         guard preferences.macros.indices.contains(index) else { return }
         guard preferences.canTransmit else {
@@ -261,6 +268,49 @@ final class AppModel {
         }
     }
 
+    /// The band was confirmed (or changed) in the sheet: carry on.
+    func confirmBand() {
+        isConfirmingBand = false
+        preferences.lastTransmitAt = Date()
+        let send = pendingSend
+        pendingSend = nil
+        send?()
+    }
+
+    func cancelBandConfirmation() {
+        isConfirmingBand = false
+        pendingSend = nil
+    }
+
+    /// Pick the quietest spot near the transmit frequency from the last few
+    /// seconds of spectrum. Only before a CQ: once a contact is under way
+    /// the frequency stays put.
+    func chooseClearFrequency() {
+        let recent = spectrumLines.suffix(30)
+        guard recent.count >= 10, let width = recent.first?.magnitudes.count else { return }
+        let binHz = JTTYProtocol.sampleRate / Double(SpectrumAnalyzer.size)
+        let minHz = RadioAudioController.SpectrumLine.minFrequency
+        var floor = [Float](repeating: 0, count: width)
+        for line in recent where line.magnitudes.count == width {
+            for i in 0..<width { floor[i] += line.magnitudes[i] }
+        }
+        let slot = Int(160 / binHz)
+        let tx = preferences.txFrequency
+        let low = max(300, tx - 300), high = min(2600, tx + 300)
+        var best: (start: Int, energy: Float)?
+        var start = Int((low - minHz) / binHz)
+        let last = Int((high - minHz) / binHz) - slot
+        while start <= last, start + slot <= width {
+            var energy: Float = 0
+            for i in start..<start + slot { energy += pow(10, floor[i] / 10) }
+            if best == nil || energy < best!.energy { best = (start, energy) }
+            start += 2
+        }
+        guard let best else { return }
+        let hz = ((minHz + Double(best.start) * binHz + 15) / 10).rounded() * 10
+        if abs(hz - tx) >= 20 { preferences.txFrequency = hz }
+    }
+
     /// What a function key would send right now, for its button.
     func preview(ofMacro index: Int) -> String {
         guard preferences.macros.indices.contains(index) else { return "" }
@@ -272,9 +322,19 @@ final class AppModel {
     }
 
     private func send(_ packed: PackedMessage) {
-        guard audio.isRunning else {
-            errorMessage = "Tap Listen first. Transmitting uses the same audio session."
+        // A stale band is the commonest way a contact gets logged wrong, so
+        // the first transmission in a while asks.
+        if preferences.bandIsStale, !isConfirmingBand {
+            pendingSend = { [weak self] in self?.send(packed) }
+            isConfirmingBand = true
             return
+        }
+        if !audio.isRunning {
+            do { try audio.start() } catch { report(error); return }
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        if preferences.choosesClearFrequency, theirCall.isEmpty, !audio.isTransmitting {
+            chooseClearFrequency()
         }
         let transmission = JTTYTransmission(
             message: packed, frequency: preferences.txFrequency, gain: Float(preferences.txGain)
@@ -283,6 +343,7 @@ final class AppModel {
             errorMessage = "Could not start transmitting."
             return
         }
+        preferences.lastTransmitAt = Date()
         let id = nextSentID
         nextSentID -= 1
         pendingSent.append(id)
@@ -312,17 +373,17 @@ final class AppModel {
     /// WSJT-X does when a message starts with TU.
     private func noteContestProgress(after text: String) {
         let closes = text.hasPrefix("TU ") || text.contains(" TU ") || text.hasSuffix(" TU")
-        guard closes, !hisCall.isEmpty, !text.hasPrefix("TU \(preferences.callsign) ") || text.contains(hisCall) else { return }
+        guard closes, !theirCall.isEmpty, !text.hasPrefix("TU \(preferences.callsign) ") || text.contains(theirCall) else { return }
         logContact()
         if preferences.exchangeProfile != .fieldDay {
             preferences.serialNumber = min(preferences.serialNumber + 1, 131071)
         }
         // TU NOW hands the exchange to the queued station.
         if text.hasPrefix("TU NOW "), !queuedCall.isEmpty {
-            hisCall = queuedCall
+            theirCall = queuedCall
             queuedCall = ""
         } else {
-            hisCall = ""
+            theirCall = ""
         }
     }
 
@@ -347,7 +408,7 @@ final class AppModel {
     }
 
     func logContact() {
-        let call = hisCall.trimmingCharacters(in: .whitespaces).uppercased()
+        let call = theirCall.trimmingCharacters(in: .whitespaces).uppercased()
         guard !call.isEmpty else { return }
         let entry = LogEntry(
             callsign: call, time: Date(), band: preferences.band,
@@ -358,11 +419,16 @@ final class AppModel {
         logbook.add(entry)
     }
 
-    /// Put a heard station's call in the His call field, or queue it if a
-    /// contact is already in progress.
-    func adopt(callsign: String) {
-        if hisCall.isEmpty || hisCall == callsign {
-            hisCall = callsign
+    /// Answer a heard station: their call goes in Their call, or into Next
+    /// if a contact is already in progress, and the transmit frequency moves
+    /// onto them, since a JTTY contact is worked on one frequency.
+    func adopt(callsign: String, frequency: Double? = nil) {
+        if theirCall.isEmpty || theirCall == callsign {
+            theirCall = callsign
+            if let frequency {
+                preferences.txFrequency = frequency
+                if !preferences.rxFollowsTx { preferences.rxFrequency = frequency }
+            }
         } else {
             queuedCall = callsign
         }

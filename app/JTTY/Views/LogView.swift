@@ -27,7 +27,7 @@ struct LogView: View {
                     ContentUnavailableView(
                         "No contacts yet",
                         systemImage: "book.closed",
-                        description: Text("A contact is logged when you send TU to the station in His call, or from the Operate screen's Log button.")
+                        description: Text("A contact is logged when you send TU to the station in Their call, or with the button above.")
                     )
                 } else {
                     List {
@@ -55,7 +55,7 @@ struct LogView: View {
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Log contact", systemImage: "plus") { model.logContact() }
-                        .disabled(model.hisCall.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(model.theirCall.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .sheet(item: $editing) { entry in

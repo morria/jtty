@@ -11,8 +11,8 @@ text at about 30 words per minute.
 
 Plug the phone into a radio with a wired audio interface, tap Listen, and
 the band appears as a transcript: every message heard, building frame by
-frame as it arrives, with the ones on your frequency marked. Reply from the
-eight function keys or type anything into the message field.
+frame as it arrives, with the ones on your frequency marked. Reply with one
+of the eight quick messages or type anything into the message field.
 
 ## The mode
 
@@ -73,7 +73,7 @@ FALSE DECODES!`.
     decoder (`tbcc.c`), GFSK synthesis (`modem.c`) and the receiver
     (`receiver.c`, on Accelerate for the FFTs).
   - `Sources/JTTYLib` — the Swift API: `JTTYEncoder` and `JTTYTransmission`
-    for sending, `NativeMacro` for the function keys, `JTTYReceiver` for
+    for sending, `NativeMacro` for the quick messages, `JTTYReceiver` for
     streaming audio in, and `MessageAssembler` for turning frames into
     messages.
 - **`app/`** — the iOS app (SwiftUI, iOS 17+, project generated with
@@ -113,13 +113,17 @@ clang -O2 -I jttylib/Sources/CJTTY/include jttylib/Sources/CJTTY/src/*.c \
 2. Set your callsign in Settings. Set the band and dial frequency so the log
    is right.
 3. Tune the radio in USB and tap Listen. Tap the waterfall to put the
-   transmit frequency on a signal, or on a clear spot.
+   transmit frequency on a signal, or on a clear spot. With "Choose a clear
+   frequency" on, calling CQ moves to the quietest spot nearby by itself.
 4. Set the transmit level so the radio shows little or no ALC movement.
 5. Key the transmitter with VOX. There is no CAT or PTT control.
 
-Function keys follow WSJT-X: F1 `CQ %M CQ`, F2 `%H %E`, F3 `%H TU CQ %M CQ`,
-F4 `%M`, F5 `%H`, F6 `TU NOW %Q %E`, F7 `%H AGN?`, F8 `%E`. Tap a message
-in the transcript to put its callsign in His call. Sending a TU message
+The first transmission after an hour's quiet asks which band the radio is
+on, so the log stays right across a retune. The quick messages are WSJT-X's
+F1 to F8 in the same order: `CQ %M CQ`, `%H %E`, `%H TU CQ %M CQ`, `%M`,
+`%H`, `TU NOW %Q %E`, `%H AGN?`, `%E`, where `%H` is the station you are
+working. Touch and hold a message in the transcript to call that station,
+which also moves the transmit frequency onto them. Sending a TU message
 logs the contact and moves the serial number on.
 
 ## Acknowledgements
