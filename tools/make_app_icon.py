@@ -3,10 +3,10 @@
 
     python3 tools/make_app_icon.py app/JTTY/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
-Three message tiles on the dark slate shared with the other shack apps,
-teal, sand and salmon, each carrying a few symbols of a JTTY signal as the
-stepped four-tone trace it draws on a waterfall, with the app's name under
-them in cream as on the FT8 icon.
+Three speech bubbles on the dark slate shared with the other shack apps,
+teal, sand and salmon, with the app's name under them in cream as on the
+FT8 icon. The bubbles are empty: a stepped four-tone trace inside them was
+tried (SHOW_TRACE) and looked jagged rather than like a signal.
 Keyboard-to-keyboard on the air is a conversation, and this is the family's
 picture of one.
 """
@@ -39,7 +39,12 @@ TILES = [
     (390, 400, 776, 578, SAND, [2, 1, 3, 1, 2, 0]),
     (204, 592, 450, 770, SALMON, [1, 3, 0]),
 ]
-SHOW_TRACE = True
+# Which corner of each tile is the bubble's tip: left-hand tiles point
+# bottom-left like a message received, the right-hand one bottom-right like
+# one sent. Index into (top-left, top-right, bottom-right, bottom-left).
+TIPS = [3, 2, 3]
+TIP_RADIUS = 10.0
+SHOW_TRACE = False
 TRACE_WIDTH = 26.0    # stroke of the trace, before scaling
 TRACE_INSET = 44.0    # from the tile edge to the trace's extent
 MARK_SCALE = 0.80
@@ -84,20 +89,28 @@ class Canvas:
         p[o + 2] += (color[2] - p[o + 2]) * alpha
 
     def rounded_rect(self, x0, y0, x1, y1, radius, color, alpha=1.0, grow=0.0):
-        """Filled rounded rectangle, antialiased over one pixel."""
+        """Filled rounded rectangle, antialiased over one pixel.
+
+        `radius` is one number or four, (top-left, top-right, bottom-right,
+        bottom-left), so a corner can be left nearly square to make a
+        speech bubble of the tile.
+        """
+        radii = list(radius) if isinstance(radius, (list, tuple)) else [radius] * 4
         x0, y0, x1, y1 = x0 - grow, y0 - grow, x1 + grow, y1 + grow
-        radius = radius + grow
         cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        hx, hy = (x1 - x0) / 2 - radius, (y1 - y0) / 2 - radius
+        wx, wy = (x1 - x0) / 2, (y1 - y0) / 2
         left, right = max(0, int(x0) - 1), min(self.size - 1, int(x1) + 1)
         top, bottom = max(0, int(y0) - 1), min(self.size - 1, int(y1) + 1)
         for y in range(top, bottom + 1):
             py = y + 0.5
-            qy = abs(py - cy) - hy
+            dy = py - cy
             for x in range(left, right + 1):
                 px = x + 0.5
-                qx = abs(px - cx) - hx
-                outside = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius
+                dx = px - cx
+                corner = (1 if dx > 0 else 0) if dy < 0 else (2 if dx > 0 else 3)
+                r = radii[corner] + grow
+                qx, qy = abs(dx) - (wx - r), abs(dy) - (wy - r)
+                outside = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
                 c = clamp(0.5 - outside)
                 if c > 0:
                     self.blend(x, y, color, c * alpha)
@@ -162,6 +175,12 @@ def placed_tiles():
         (x0 * MARK_SCALE + dx, y0 * MARK_SCALE + dy, x1 * MARK_SCALE + dx, y1 * MARK_SCALE + dy, c, g)
         for x0, y0, x1, y1, c, g in TILES
     ]
+
+
+def corner_radii(index):
+    radii = [TILE_RADIUS * MARK_SCALE] * 4
+    radii[TIPS[index]] = TIP_RADIUS * MARK_SCALE
+    return radii
 
 
 def trace(tile):
@@ -229,18 +248,17 @@ def wordmark(text, top, h, gap):
 def main(path):
     canvas = Canvas(SIZE)
     tiles = placed_tiles()
-    radius = TILE_RADIUS * MARK_SCALE
     letters = wordmark(TEXT, TEXT_TOP, TEXT_HEIGHT, TEXT_GAP)
     # Shadows first, so nothing casts one onto what is in front of it.
-    for x0, y0, x1, y1, _, _ in tiles:
+    for index, (x0, y0, x1, y1, _, _) in enumerate(tiles):
         for grow, a in SHADOW_PASSES:
-            canvas.rounded_rect(x0, y0 + SHADOW_OFFSET, x1, y1 + SHADOW_OFFSET, radius, (0, 0, 0), a, grow)
+            canvas.rounded_rect(x0, y0 + SHADOW_OFFSET, x1, y1 + SHADOW_OFFSET, corner_radii(index), (0, 0, 0), a, grow)
     for pts in letters:
         for grow, a in SHADOW_PASSES:
             canvas.stroke([(x, y + SHADOW_OFFSET) for x, y in pts], TEXT_WIDTH + grow, (0, 0, 0), a)
-    for tile in tiles:
+    for index, tile in enumerate(tiles):
         x0, y0, x1, y1, color, _ = tile
-        canvas.rounded_rect(x0, y0, x1, y1, radius, color)
+        canvas.rounded_rect(x0, y0, x1, y1, corner_radii(index), color)
         if SHOW_TRACE:
             canvas.stroke(trace(tile), TRACE_WIDTH * MARK_SCALE, INK)
     for pts in letters:
