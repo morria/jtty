@@ -168,6 +168,20 @@ public func isStandardCallsign(_ callsign: String) -> Bool {
     jtty_is_standard_call(callsign)
 }
 
+/// Whether a word looks like any amateur callsign, compound and portable
+/// forms included: letters and digits with up to two slashes, at least one
+/// digit and one letter in the base, nothing else.
+public func looksLikeCallsign(_ word: String) -> Bool {
+    let parts = word.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count <= 3, !parts.contains(where: \.isEmpty) else { return false }
+    guard word.count >= 3, word.count <= 13 else { return false }
+    guard word.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "/") }) else { return false }
+    // The longest part is the base call and must read as one: a digit in
+    // the second or third position followed by letters.
+    let base = parts.max { $0.count < $1.count } ?? parts[0]
+    return isStandardCallsign(String(base)) || (base.contains { $0.isNumber } && base.contains { $0.isLetter } && base.count >= 3)
+}
+
 /// Fold text into the source alphabet the way the encoder will.
 public func normalizedText(_ text: String) -> String {
     var buffer = [CChar](repeating: 0, count: JTTYProtocol.maxTextLength + 1)

@@ -84,6 +84,20 @@ final class CodecTests: XCTestCase {
             XCTFail("not native")
         }
         XCTAssertEqual(NativeMacro.compile("%H DE %M K", context: context), .literal("W9XYZ DE K1ABC K"))
+        // Compound and portable calls go as text rather than being refused.
+        var portable = context
+        portable.theirCall = "PJ4/KA1ABC"
+        XCTAssertEqual(NativeMacro.compile("%H %E", context: portable), .literal("PJ4/KA1ABC 599 107"))
+        XCTAssertEqual(try JTTYEncoder.pack(text: "PJ4/KA1ABC 599 107").frameCount, 4)
+        var stroke = context
+        stroke.myCall = "K1ABC/P"
+        XCTAssertEqual(NativeMacro.compile("CQ %M CQ", context: stroke), .literal("CQ K1ABC/P CQ"))
+        XCTAssertTrue(looksLikeCallsign("PJ4/KA1ABC"))
+        XCTAssertTrue(looksLikeCallsign("K1ABC/P"))
+        XCTAssertTrue(looksLikeCallsign("W9XYZ"))
+        XCTAssertFalse(looksLikeCallsign("599"))
+        XCTAssertFalse(looksLikeCallsign("HELLO"))
+        XCTAssertFalse(looksLikeCallsign("/K1ABC"))
         if case .invalid = NativeMacro.compile("%H", context: MacroContext(myCall: "K1ABC")) {} else { XCTFail("empty call accepted") }
         var fieldDay = context
         fieldDay.profile = .fieldDay

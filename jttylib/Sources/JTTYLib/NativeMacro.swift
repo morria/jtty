@@ -62,6 +62,21 @@ public enum NativeMacro {
     }
 
     public static func compile(_ template: String, context: MacroContext) -> CompiledMacro {
+        let compiled = compileNative(template, context: context)
+        // A compound or portable call (PJ4/KA1ABC, W2ASM/P) does not fit the
+        // compact callsign field. Rather than refuse, send the whole message
+        // as text, which is what WSJT-X does with such calls too: it costs
+        // frames, not the contact.
+        if case .invalid(let why) = compiled, why.hasPrefix(nonStandardMarker) {
+            let text = expand(template, context: context)
+            return .literal(text)
+        }
+        return compiled
+    }
+
+    private static let nonStandardMarker = "\u{1}nonstandard "
+
+    private static func compileNative(_ template: String, context: MacroContext) -> CompiledMacro {
         let key = canonical(template)
         switch key {
         case "CQ %M CQ":
@@ -111,7 +126,7 @@ public enum NativeMacro {
         if call.isEmpty { return .invalid("Enter \(what) first") }
         let atom = JTTYAtom.call(action, call)
         guard atom.isValid, let text = atom.rendered else {
-            return .invalid("\(call) is not a standard callsign; type the message instead")
+            return .invalid(nonStandardMarker + call)
         }
         return .native([atom], text: text)
     }

@@ -21,10 +21,12 @@ struct TranscriptLine: Identifiable, Equatable {
     /// Whether the message came in near the receive frequency.
     var isOnFrequency: Bool
 
-    /// The first thing in the message that looks like a callsign.
+    /// The first thing in the message that looks like a callsign, compound
+    /// and portable calls included.
     var callsign: String? {
-        for word in text.split(separator: " ") where isStandardCallsign(String(word)) {
-            return String(word)
+        let skip: Set<String> = ["CQ", "TU", "NOW", "AGN?", "DE", "QRZ?", "599", "DX", "TEST"]
+        for word in text.split(separator: " ").map(String.init) where !skip.contains(word) && looksLikeCallsign(word) {
+            return word
         }
         return nil
     }
