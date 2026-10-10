@@ -63,6 +63,14 @@ final class RadioAudioController {
 
     private(set) var isRunning = false
     private(set) var isTransmitting = false
+    /// Whether the steady tune tone is going out.
+    private(set) var isTuning = false
+    /// What iOS is actually using, for the screen: "QMX Transceiver" or
+    /// "iPhone Microphone", and the same for output. The difference between
+    /// a radio that keys and one that does not is usually here.
+    private(set) var inputRoute = "—"
+    private(set) var outputRoute = "—"
+    private(set) var isUSBRoute = false
     /// Messages queued on the player, including the one playing.
     private(set) var queuedTransmissions = 0
     /// Most recent input level, 0…1, for the meter.
@@ -79,6 +87,8 @@ final class RadioAudioController {
 
     private let audioEngine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let tunePlayer = AVAudioPlayerNode()
+    @ObservationIgnored private var routeObserver: NSObjectProtocol?
     private var converter: AVAudioConverter?
     private var workFormat: AVAudioFormat?
 
@@ -120,21 +130,64 @@ final class RadioAudioController {
 
         audioEngine.attach(player)
         audioEngine.connect(player, to: audioEngine.mainMixerNode, format: modemFormat)
+        audioEngine.attach(tunePlayer)
+        audioEngine.connect(tunePlayer, to: audioEngine.mainMixerNode, format: modemFormat)
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.receive(buffer)
         }
         audioEngine.prepare()
         try audioEngine.start()
         isRunning = true
-        log.info("audio started, input \(inputFormat.sampleRate, privacy: .public) Hz")
+        readRoute()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main
+        ) { [weak self] _ in
+            self?.preferUSBInput()
+            self?.readRoute()
+        }
+        log.info("audio started, input \(inputFormat.sampleRate, privacy: .public) Hz, in \(self.inputRoute, privacy: .public), out \(self.outputRoute, privacy: .public)")
+    }
+
+    /// Where the audio is going. Shown on screen because it is the first
+    /// thing to check when the radio does not key: a phone that has fallen
+    /// back to its own microphone and earpiece decodes itself beautifully
+    /// and never touches the radio.
+    private func readRoute() {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        inputRoute = route.inputs.map(\.portName).joined(separator: ", ")
+        outputRoute = route.outputs.map(\.portName).joined(separator: ", ")
+        if inputRoute.isEmpty { inputRoute = "none" }
+        if outputRoute.isEmpty { outputRoute = "none" }
+        let external: Set<AVAudioSession.Port> = [.usbAudio, .headsetMic, .lineIn, .bluetoothHFP, .bluetoothA2DP, .headphones, .lineOut]
+        isUSBRoute = route.inputs.contains { external.contains($0.portType) } ||
+            route.outputs.contains { external.contains($0.portType) }
+    }
+
+    /// If a USB audio device is available, use it for input. iOS normally
+    /// does this on its own, but not always when the device was plugged in
+    /// before the session started.
+    private func preferUSBInput() {
+        let session = AVAudioSession.sharedInstance()
+        guard let usb = session.availableInputs?.first(where: { $0.portType == .usbAudio }) else { return }
+        if session.currentRoute.inputs.first?.uid != usb.uid {
+            try? session.setPreferredInput(usb)
+        }
     }
 
     func stop() {
         guard isRunning else { return }
         audioEngine.inputNode.removeTap(onBus: 0)
         player.stop()
+        tunePlayer.stop()
         audioEngine.stop()
         audioEngine.detach(player)
+        audioEngine.detach(tunePlayer)
+        if let routeObserver {
+            NotificationCenter.default.removeObserver(routeObserver)
+            self.routeObserver = nil
+        }
+        isTuning = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         dsp.sync {
             receiver = nil
@@ -150,10 +203,15 @@ final class RadioAudioController {
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .measurement, options: [.allowBluetoothA2DP])
+            // Without `.defaultToSpeaker`, play-and-record sends output to
+            // the earpiece, which is inaudible across a desk and misleading
+            // when checking whether anything is being sent at all. A USB or
+            // wired interface still takes precedence over the speaker.
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.allowBluetoothA2DP, .defaultToSpeaker])
             try session.setPreferredSampleRate(48_000)
             try session.setPreferredIOBufferDuration(0.04)
             try session.setActive(true)
+            preferUSBInput()
         } catch {
             throw AudioError.session(error)
         }
@@ -257,8 +315,33 @@ final class RadioAudioController {
     /// Stop transmitting now, dropping anything queued.
     func stopTransmitting() {
         player.stop()
+        tunePlayer.stop()
         queuedTransmissions = 0
         isTransmitting = false
+        isTuning = false
+    }
+
+    /// A steady tone at the transmit frequency, for setting the drive level
+    /// and seeing the radio key. Stops after `duration` or on
+    /// `stopTransmitting`.
+    func tune(frequency: Double, gain: Float, duration: TimeInterval = 10) {
+        guard isRunning, let workFormat, !isTuning else { return }
+        let count = Int(duration * JTTYProtocol.sampleRate)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: workFormat, frameCapacity: AVAudioFrameCount(count)) else { return }
+        buffer.frameLength = AVAudioFrameCount(count)
+        let samples = buffer.floatChannelData![0]
+        let ramp = Int(0.01 * JTTYProtocol.sampleRate)
+        for i in 0..<count {
+            var envelope = gain
+            if i < ramp { envelope *= Float(i) / Float(ramp) }
+            if i >= count - ramp { envelope *= Float(count - 1 - i) / Float(ramp) }
+            samples[i] = envelope * Float(sin(2 * Double.pi * frequency * Double(i) / JTTYProtocol.sampleRate))
+        }
+        isTuning = true
+        tunePlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor in self?.isTuning = false }
+        }
+        tunePlayer.play()
     }
 }
 

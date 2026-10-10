@@ -114,6 +114,10 @@ struct SettingsView: View {
             Text("Audio")
         } footer: {
             Text("""
+                Now using \(model.wrappedValue.audio.inputRoute) for input and \(model.wrappedValue.audio.outputRoute) for output. \
+                A radio connected over USB should appear by name in both; the phone's own microphone \
+                and speaker mean nothing is reaching the radio.
+
                 With a clear frequency chosen, calling CQ first moves the transmit frequency to the \
                 quietest spot within 300 Hz, judged from the last few seconds of the waterfall. \
                 Answering a station always moves onto their frequency. Turn it off to stay exactly \

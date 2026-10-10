@@ -241,6 +241,18 @@ final class AppModel {
         do { try audio.toggleRecording() } catch { report(error) }
     }
 
+    /// Hold a steady carrier for ten seconds at the transmit frequency.
+    func tune() {
+        if !audio.isRunning {
+            do { try audio.start() } catch { report(error); return }
+        }
+        if audio.isTuning {
+            audio.stopTransmitting()
+        } else {
+            audio.tune(frequency: preferences.txFrequency, gain: Float(preferences.txGain))
+        }
+    }
+
     // MARK: - Transmitting
 
     var isTransmitting: Bool { audio.isTransmitting }

@@ -62,10 +62,15 @@ struct OperateView: View {
                         Toggle("Waterfall", isOn: $showsWaterfall)
                         Button("Clear", systemImage: "trash") { model.clearTranscript() }
                             .disabled(model.transcript.isEmpty)
+                        Button(model.audio.isTuning ? "Stop tuning" : "Tune (10 s tone)", systemImage: "tuningfork") { model.tune() }
                         Toggle(isOn: Binding(get: { model.audio.isRecording }, set: { _ in model.toggleRecording() })) {
                             Label("Record audio", systemImage: "record.circle")
                         }
                         .disabled(!model.isListening)
+                        Section("Audio route") {
+                            Text("In: \(model.audio.inputRoute)")
+                            Text("Out: \(model.audio.outputRoute)")
+                        }
                         Section("Receiver this session") {
                             // Sync hits without decodes are JTTY frames the
                             // decoder could not read; none at all means what
@@ -155,8 +160,16 @@ struct OperateView: View {
     private var controls: some View {
         @Bindable var model = model
         return VStack(spacing: 8) {
-            if model.isTransmitting {
+            if model.isTransmitting || model.audio.isTuning {
                 transmitBanner
+            }
+            if model.isListening, !model.audio.isUSBRoute {
+                // The phone talking to itself is the commonest reason nothing
+                // reaches the radio, and it is invisible otherwise.
+                Label("Using \(model.audio.inputRoute) and \(model.audio.outputRoute), not a radio interface", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Palette.sand)
+                    .padding(.horizontal)
             }
             exchangeStrip
             macroStrip
@@ -171,7 +184,7 @@ struct OperateView: View {
         HStack {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .symbolEffect(.variableColor.iterative)
-            Text("Transmitting")
+            Text(model.audio.isTuning ? "Tuning" : "Transmitting")
                 .font(.subheadline.weight(.semibold))
             if model.audio.queuedTransmissions > 1 {
                 Text("· \(model.audio.queuedTransmissions) queued")
