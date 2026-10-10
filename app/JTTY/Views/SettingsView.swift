@@ -18,14 +18,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .scrollDismissesKeyboard(.interactively)
-            .toolbar {
-                // The number pad has no return key, so this is the only way
-                // off the dial-frequency field.
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { editingNumber = false }
-                }
-            }
+            .dismissesKeyboard()
         }
     }
 

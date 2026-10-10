@@ -46,6 +46,7 @@ struct LogView: View {
                 }
             }
             .navigationTitle("Log")
+            .dismissesKeyboard()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: ADIFDocument(text: model.logbook.adif), preview: SharePreview("JTTY log")) {
@@ -126,6 +127,7 @@ struct LogEntryEditor: View {
             }
             .navigationTitle("Contact")
             .navigationBarTitleDisplayMode(.inline)
+            .dismissesKeyboard()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

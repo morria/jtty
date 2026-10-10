@@ -50,6 +50,7 @@ struct OperateView: View {
                 controls
             }
             .background(Color(.systemGroupedBackground))
+            .dismissesKeyboard()
             .navigationTitle("JTTY")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $model.isConfirmingBand) {
@@ -299,6 +300,7 @@ struct OperateView: View {
         guard !text.isEmpty else { return }
         model.send(text: text)
         draft = ""
+        composing = false
     }
 }
 
@@ -365,11 +367,8 @@ struct BandSheet: View {
             .navigationTitle("Which band?")
             .navigationBarTitleDisplayMode(.inline)
             .scrollDismissesKeyboard(.interactively)
+            .dismissesKeyboard()
             .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { editingNumber = false }
-                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { model.cancelBandConfirmation() }
                 }

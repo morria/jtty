@@ -98,6 +98,7 @@ struct OnboardingView: View {
                 }
             }
             .navigationTitle("JTTY")
+            .dismissesKeyboard()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Start") {
