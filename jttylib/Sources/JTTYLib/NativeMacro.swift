@@ -55,6 +55,21 @@ public enum NativeMacro {
 
     public static let defaultLabels = ["CQ", "Exchange", "TU, CQ", "My call", "Their call", "TU, next", "Again?", "Exchange only"]
 
+    /// Quick messages for ordinary keyboard contacts rather than a contest:
+    /// no serial numbers, no queue. Each still packs compactly where the
+    /// grammar allows: `%H TU` is one frame, `%H %G` two, `AGN?` one.
+    public static let casualTemplates = [
+        "CQ %M CQ",
+        "%H DE %M",
+        "%H %G",
+        "AGN?",
+        "%H TU",
+        "QSL TU",
+        "%H 73",
+        "QRZ?",
+    ]
+    public static let casualLabels = ["CQ", "Reply", "Grid", "Again?", "TU", "QSL", "73", "QRZ?"]
+
     /// Whitespace-normalised, upper-cased, so a template typed with an extra
     /// space still counts as the native one.
     static func canonical(_ template: String) -> String {

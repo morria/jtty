@@ -1,18 +1,32 @@
 import JTTYLib
 import SwiftUI
 
-/// The operating screen: the band as a transcript, with the exchange
-/// controls underneath. Messages heard come in on the left as they build;
-/// messages sent go out on the right.
+/// The band: everything heard on every frequency, as one wall of text, and
+/// the way into any one conversation.
 struct OperateView: View {
     @Environment(AppModel.self) private var model
-    @State private var draft = ""
     @State private var showsWaterfall = true
-    @FocusState private var composing: Bool
+    @State private var path: [Destination] = OperateView.initialPath
+
+    /// `-conversation 1507` on a debug launch opens that frequency.
+    private static var initialPath: [Destination] {
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "-conversation"), index + 1 < CommandLine.arguments.count,
+           let hz = Double(CommandLine.arguments[index + 1]) {
+            return [Destination(frequency: hz)]
+        }
+        #endif
+        return []
+    }
+
+    /// A conversation to open: a frequency, and the callsign that led there.
+    struct Destination: Hashable {
+        var frequency: Double
+        var callsign: String?
+    }
 
     var body: some View {
-        @Bindable var model = model
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 if showsWaterfall {
                     WaterfallView(
@@ -20,13 +34,10 @@ struct OperateView: View {
                         rxFrequency: model.receiveFrequency,
                         txFrequency: model.preferences.txFrequency
                     ) { hz in
-                        model.preferences.txFrequency = hz
-                        if !model.preferences.rxFollowsTx { model.preferences.rxFrequency = hz }
+                        path.append(Destination(frequency: hz))
                     }
                     .frame(height: 96)
                     .overlay(alignment: .topTrailing) {
-                        // Input level, so the interface gain can be set
-                        // without guessing. Only meaningful while listening.
                         if model.isListening {
                             HStack(spacing: 8) {
                                 if model.audio.isRecording {
@@ -46,19 +57,20 @@ struct OperateView: View {
                     .padding(.bottom, 6)
                 }
                 transcript
-                Divider()
-                controls
+                VStack(spacing: 8) {
+                    TransmitBanner()
+                    RouteWarning()
+                }
             }
             .background(Color(.systemGroupedBackground))
             .dismissesKeyboard()
-            .navigationTitle("JTTY")
+            .navigationTitle("Band")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $model.isConfirmingBand) {
-                BandSheet()
-                    .presentationDetents([.medium])
+            .navigationDestination(for: Destination.self) { destination in
+                ConversationView(frequency: destination.frequency, callsign: destination.callsign)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Toggle("Waterfall", isOn: $showsWaterfall)
                         Button("Clear", systemImage: "trash") { model.clearTranscript() }
@@ -73,9 +85,6 @@ struct OperateView: View {
                             Text("Out: \(model.audio.outputRoute)")
                         }
                         Section("Receiver this session") {
-                            // Sync hits without decodes are JTTY frames the
-                            // decoder could not read; none at all means what
-                            // is on the waterfall is not JTTY.
                             Text("\(model.statistics.syncHits) sync hits · \(model.statistics.decodes) frames decoded")
                         }
                     } label: {
@@ -83,12 +92,12 @@ struct OperateView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(model.isListening ? "Stop" : "Listen", systemImage: model.isListening ? "stop.fill" : "ear") {
-                        model.toggleListening()
+                    Button("New conversation", systemImage: "square.and.pencil") {
+                        path.append(Destination(frequency: model.newConversationFrequency()))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(model.isListening ? Palette.salmon : Palette.teal)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ListenButton()
                 }
             }
         }
@@ -104,15 +113,19 @@ struct OperateView: View {
                         emptyState
                     }
                     ForEach(model.transcript) { line in
-                        TranscriptRow(line: line)
-                            .id(line.id)
-                            .contextMenu { contextMenu(for: line) }
+                        Button {
+                            path.append(Destination(frequency: line.frequency, callsign: line.kind == .received ? line.callsign : nil))
+                        } label: {
+                            TranscriptRow(line: line, showsFrequency: true)
+                        }
+                        .buttonStyle(.plain)
+                        .id(line.id)
+                        .contextMenu { contextMenu(for: line) }
                     }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
             }
-            .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.transcript.last?.id) { _, id in
                 if let id { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) } }
             }
@@ -132,7 +145,7 @@ struct OperateView: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
             Text(model.isListening
-                 ? "Messages appear here as their frames arrive. Tap one to call that station."
+                 ? "Everything heard on the band appears here. Tap a message to open its frequency, or New to call CQ."
                  : "Connect the radio's audio and tap Listen.")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
@@ -144,163 +157,16 @@ struct OperateView: View {
 
     @ViewBuilder
     private func contextMenu(for line: TranscriptLine) -> some View {
-        if let callsign = line.callsign, callsign != model.preferences.callsign {
+        if let callsign = line.callsign, callsign != model.preferences.callsign, line.kind == .received {
             Button("Call \(callsign)", systemImage: "person.wave.2") {
-                model.adopt(callsign: callsign, frequency: line.kind == .received ? line.frequency : nil)
+                model.adopt(callsign: callsign, frequency: line.frequency)
+                path.append(Destination(frequency: line.frequency, callsign: callsign))
             }
         }
-        Button("Set frequency to \(Int(line.frequency)) Hz", systemImage: "dial.medium") {
-            model.preferences.txFrequency = line.frequency
-            if !model.preferences.rxFollowsTx { model.preferences.rxFrequency = line.frequency }
+        Button("Open \(Int(line.frequency)) Hz", systemImage: "bubble.left.and.bubble.right") {
+            path.append(Destination(frequency: line.frequency))
         }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
-    }
-
-    // MARK: - Controls
-
-    private var controls: some View {
-        @Bindable var model = model
-        return VStack(spacing: 8) {
-            if model.isTransmitting || model.audio.isTuning {
-                transmitBanner
-            }
-            if model.isListening, !model.audio.isUSBRoute {
-                // The phone talking to itself is the commonest reason nothing
-                // reaches the radio, and it is invisible otherwise.
-                Label("Using \(model.audio.inputRoute) and \(model.audio.outputRoute), not a radio interface", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(Palette.sand)
-                    .padding(.horizontal)
-            }
-            exchangeStrip
-            macroStrip
-            composeBar
-        }
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .background(.bar)
-    }
-
-    private var transmitBanner: some View {
-        HStack {
-            Image(systemName: "dot.radiowaves.left.and.right")
-                .symbolEffect(.variableColor.iterative)
-            Text(model.audio.isTuning ? "Tuning" : "Transmitting")
-                .font(.subheadline.weight(.semibold))
-            if model.audio.queuedTransmissions > 1 {
-                Text("· \(model.audio.queuedTransmissions) queued")
-                    .font(.subheadline)
-            }
-            Spacer()
-            Button("Stop", role: .destructive) { model.stopTransmitting() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .tint(Palette.salmon)
-        }
-        .foregroundStyle(Palette.salmon)
-        .padding(.horizontal)
-        .padding(.vertical, 6)
-        .background(Palette.salmon.opacity(0.12))
-        .accessibilityElement(children: .combine)
-    }
-
-    /// Who is being worked, who is next, and the serial number.
-    private var exchangeStrip: some View {
-        @Bindable var model = model
-        return HStack(spacing: 10) {
-            callField("Their call", text: $model.theirCall)
-            callField("Next", text: $model.queuedCall)
-            if model.preferences.exchangeProfile != .fieldDay {
-                // The readout and the stepper are one control that must not
-                // wrap, however narrow the row gets with the keyboard up.
-                HStack(spacing: 6) {
-                    Text(String(format: "%03d", model.preferences.serialNumber))
-                        .font(.body.monospacedDigit().weight(.semibold))
-                        .contentTransition(.numericText())
-                    Stepper("Serial number", value: $model.preferences.serialNumber, in: 0...131071)
-                        .labelsHidden()
-                }
-                .fixedSize()
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Serial number")
-                .accessibilityValue(String(format: "%03d", model.preferences.serialNumber))
-            }
-        }
-        .padding(.horizontal)
-    }
-
-    private func callField(_ label: String, text: Binding<String>) -> some View {
-        TextField(label, text: text)
-            .textInputAutocapitalization(.characters)
-            .autocorrectionDisabled()
-            .font(.body.monospaced())
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: .infinity)
-            .onChange(of: text.wrappedValue) { _, value in
-                let upper = value.uppercased()
-                if upper != value { text.wrappedValue = upper }
-            }
-    }
-
-    /// The eight quick messages, each showing what it would send.
-    private var macroStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(0..<8, id: \.self) { index in
-                    MacroButton(
-                        label: NativeMacro.defaultLabels[index],
-                        preview: model.preview(ofMacro: index)
-                    ) {
-                        model.sendMacro(index)
-                    }
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-
-    private var composeBar: some View {
-        HStack(spacing: 8) {
-            TextField("Message", text: $draft, axis: .vertical)
-                .lineLimit(1...3)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .font(.body.monospaced())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-                .focused($composing)
-                .onSubmit(sendDraft)
-            Button(action: sendDraft) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
-            }
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-            .accessibilityLabel("Send")
-        }
-        .padding(.horizontal)
-        .overlay(alignment: .topTrailing) {
-            if let frames = frameCount(for: draft), frames > 0 {
-                Text("\(frames) frame\(frames == 1 ? "" : "s") · \(String(format: "%.1f", Double(frames) * JTTYProtocol.frameDuration)) s")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.trailing, 58)
-                    .offset(y: -14)
-            }
-        }
-    }
-
-    private func frameCount(for text: String) -> Int? {
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
-        return try? JTTYEncoder.pack(text: text, profile: model.preferences.exchangeProfile).frameCount
-    }
-
-    private func sendDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        model.send(text: text)
-        draft = ""
-        composing = false
     }
 }
 
@@ -384,6 +250,7 @@ struct BandSheet: View {
 /// One line of the transcript.
 struct TranscriptRow: View {
     let line: TranscriptLine
+    var showsFrequency = true
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -402,7 +269,7 @@ struct TranscriptRow: View {
                     Text(line.text.isEmpty ? " " : line.text)
                         .font(.body.monospaced())
                         .foregroundStyle(isSent ? Color.white : .primary)
-                        .textSelection(.enabled)
+                        .multilineTextAlignment(isSent ? .trailing : .leading)
                     if line.isInProgress {
                         Image(systemName: "ellipsis")
                             .font(.caption)
@@ -413,7 +280,10 @@ struct TranscriptRow: View {
                 }
                 HStack(spacing: 6) {
                     Text(Self.timeFormatter.string(from: line.time))
-                    Text("\(Int(line.frequency)) Hz")
+                    if showsFrequency {
+                        Text("\(Int(line.frequency)) Hz")
+                            .foregroundStyle(isSent ? Color.white.opacity(0.9) : Palette.teal)
+                    }
                     if let snr = line.snr {
                         Text(String(format: "%+.0f dB", snr))
                             .foregroundStyle(isSent ? Color.white.opacity(0.8) : Palette.signalColor(for: snr))
@@ -432,7 +302,7 @@ struct TranscriptRow: View {
                 in: RoundedRectangle(cornerRadius: 14, style: .continuous)
             )
             .overlay(alignment: .leading) {
-                if !isSent, line.isOnFrequency {
+                if !isSent, line.isOnFrequency, showsFrequency {
                     // On the receive frequency: the one worth reading first.
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Palette.teal)
@@ -443,7 +313,8 @@ struct TranscriptRow: View {
             }
             if !isSent { Spacer(minLength: 40) }
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isSent ? "Sent" : "Heard") \(line.text)")
+        .accessibilityLabel("\(isSent ? "Sent" : "Heard") \(line.text), \(Int(line.frequency)) hertz")
     }
 }

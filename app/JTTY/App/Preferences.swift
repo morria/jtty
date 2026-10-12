@@ -53,8 +53,19 @@ struct Preferences: Codable, Equatable, Sendable {
     /// restart mid-contest.
     var serialNumber = 1
 
-    /// The eight function-key templates.
-    var macros: [String] = NativeMacro.defaultTemplates
+    /// Contest operating: serial numbers, a queued station, and the
+    /// contest exchange profiles. Off, a contact is a conversation.
+    var contestMode = false
+
+    /// The eight quick messages, one set for each way of operating.
+    var contestMacros: [String] = NativeMacro.defaultTemplates
+    var casualMacros: [String] = NativeMacro.casualTemplates
+
+    var macros: [String] {
+        get { contestMode ? contestMacros : casualMacros }
+        set { if contestMode { contestMacros = newValue } else { casualMacros = newValue } }
+    }
+    var macroLabels: [String] { contestMode ? NativeMacro.defaultLabels : NativeMacro.casualLabels }
 
     var hasCompletedSetup = false
 
@@ -73,7 +84,8 @@ struct Preferences: Codable, Equatable, Sendable {
         copy.callsign = callsign.trimmingCharacters(in: .whitespaces).uppercased()
         copy.grid = grid.trimmingCharacters(in: .whitespaces).uppercased()
         copy.configuredExchange = configuredExchange.trimmingCharacters(in: .whitespaces).uppercased()
-        if copy.macros.count != 8 { copy.macros = NativeMacro.defaultTemplates }
+        if copy.contestMacros.count != 8 { copy.contestMacros = NativeMacro.defaultTemplates }
+        if copy.casualMacros.count != 8 { copy.casualMacros = NativeMacro.casualTemplates }
         copy.serialNumber = max(0, min(copy.serialNumber, 131071))
         copy.txFrequency = min(max(copy.txFrequency, 200), 2700)
         copy.rxFrequency = min(max(copy.rxFrequency, 200), 2700)
@@ -83,6 +95,38 @@ struct Preferences: Codable, Equatable, Sendable {
     // MARK: - Persistence
 
     private static let key = "preferences"
+
+    init() {}
+
+    /// Every field falls back to its default when missing, so adding a
+    /// setting in a new version never throws away the callsign and
+    /// everything else saved by the old one.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func get<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? c.decodeIfPresent(T.self, forKey: key)) ?? fallback
+        }
+        let defaults = Preferences()
+        callsign = get(.callsign, defaults.callsign)
+        grid = get(.grid, defaults.grid)
+        band = get(.band, defaults.band)
+        dialFrequency = get(.dialFrequency, defaults.dialFrequency)
+        txFrequency = get(.txFrequency, defaults.txFrequency)
+        rxFrequency = get(.rxFrequency, defaults.rxFrequency)
+        rxTolerance = get(.rxTolerance, defaults.rxTolerance)
+        rxFollowsTx = get(.rxFollowsTx, defaults.rxFollowsTx)
+        choosesClearFrequency = get(.choosesClearFrequency, defaults.choosesClearFrequency)
+        lastTransmitAt = get(.lastTransmitAt, defaults.lastTransmitAt)
+        searchesWholePassband = get(.searchesWholePassband, defaults.searchesWholePassband)
+        txGain = get(.txGain, defaults.txGain)
+        exchangeProfile = get(.exchangeProfile, defaults.exchangeProfile)
+        configuredExchange = get(.configuredExchange, defaults.configuredExchange)
+        serialNumber = get(.serialNumber, defaults.serialNumber)
+        contestMode = get(.contestMode, defaults.contestMode)
+        contestMacros = get(.contestMacros, defaults.contestMacros)
+        casualMacros = get(.casualMacros, defaults.casualMacros)
+        hasCompletedSetup = get(.hasCompletedSetup, defaults.hasCompletedSetup)
+    }
 
     static func load() -> Preferences {
         guard let data = UserDefaults.standard.data(forKey: key),

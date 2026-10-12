@@ -56,6 +56,16 @@ final class AppModel {
     var theirCall = ""
     var queuedCall = ""
 
+    /// The frequency of the conversation on screen, if one is open. A
+    /// conversation is everything within `conversationHalfWidth` of it: a
+    /// JTTY contact is worked on one frequency, and 60 Hz either side is
+    /// well inside one signal's width while staying clear of the next
+    /// channel over.
+    var activeConversation: Double?
+    static let conversationHalfWidth: Double = 60
+    /// Conversations opened by hand that have no traffic yet still need a row.
+    private(set) var emptyConversations: [Double] = []
+
     /// A transmission waiting on the band being confirmed.
     private var pendingSend: (() -> Void)?
     var isConfirmingBand = false
@@ -127,6 +137,7 @@ final class AppModel {
         prefs.hasCompletedSetup = true
         prefs.serialNumber = 107
         prefs.lastTransmitAt = Date()
+        prefs.contestMode = CommandLine.arguments.contains("-contest")
         preferences = prefs
         theirCall = "W9XYZ"
         let now = Date()
@@ -183,7 +194,8 @@ final class AppModel {
         MacroContext(
             myCall: preferences.callsign, theirCall: theirCall, queuedCall: queuedCall,
             serialNumber: preferences.serialNumber, grid: preferences.grid,
-            profile: preferences.exchangeProfile, configuredExchange: preferences.configuredExchange
+            profile: preferences.contestMode ? preferences.exchangeProfile : .none,
+            configuredExchange: preferences.configuredExchange
         )
     }
 
@@ -237,6 +249,42 @@ final class AppModel {
 
     func clearTranscript() {
         transcript.removeAll()
+        emptyConversations.removeAll()
+    }
+
+    // MARK: - Conversations
+
+    /// Whether a line belongs to the conversation on `frequency`.
+    static func line(_ line: TranscriptLine, isNear frequency: Double) -> Bool {
+        abs(line.frequency - frequency) <= conversationHalfWidth
+    }
+
+    func lines(near frequency: Double) -> [TranscriptLine] {
+        transcript.filter { Self.line($0, isNear: frequency) }
+    }
+
+    /// Open the conversation at a frequency: the transmit frequency moves
+    /// onto it, since that is where any reply belongs.
+    func enterConversation(at frequency: Double, callsign: String? = nil) {
+        activeConversation = frequency
+        preferences.txFrequency = frequency
+        if !preferences.rxFollowsTx { preferences.rxFrequency = frequency }
+        if let callsign, theirCall.isEmpty { theirCall = callsign }
+    }
+
+    func leaveConversation() {
+        activeConversation = nil
+    }
+
+    /// A fresh conversation for calling CQ: on a clear frequency if that is
+    /// on, otherwise wherever the transmit frequency is.
+    func newConversationFrequency() -> Double {
+        if preferences.choosesClearFrequency { chooseClearFrequency() }
+        let frequency = preferences.txFrequency
+        if !emptyConversations.contains(where: { abs($0 - frequency) <= Self.conversationHalfWidth }) {
+            emptyConversations.append(frequency)
+        }
+        return frequency
     }
 
     func toggleRecording() {
@@ -374,7 +422,9 @@ final class AppModel {
             do { try audio.start() } catch { report(error); return }
             UIApplication.shared.isIdleTimerDisabled = true
         }
-        if preferences.choosesClearFrequency, theirCall.isEmpty, !audio.isTransmitting {
+        // Calling CQ from the band picks a clear spot; inside a conversation
+        // the frequency is the conversation's and stays put.
+        if preferences.choosesClearFrequency, theirCall.isEmpty, activeConversation == nil, !audio.isTransmitting {
             chooseClearFrequency()
         }
         let transmission = JTTYTransmission(
@@ -416,7 +466,7 @@ final class AppModel {
         let closes = text.hasPrefix("TU ") || text.contains(" TU ") || text.hasSuffix(" TU")
         guard closes, !theirCall.isEmpty, !text.hasPrefix("TU \(preferences.callsign) ") || text.contains(theirCall) else { return }
         logContact()
-        if preferences.exchangeProfile != .fieldDay {
+        if preferences.contestMode, preferences.exchangeProfile != .fieldDay {
             preferences.serialNumber = min(preferences.serialNumber + 1, 131071)
         }
         // TU NOW hands the exchange to the queued station.
@@ -432,6 +482,7 @@ final class AppModel {
 
     /// What we sent as the exchange in this contact, if anything.
     private var lastExchangeSent: String {
+        guard preferences.contestMode else { return "" }
         if case .native(_, let text) = NativeMacro.exchange(macroContext) { return text }
         return String(format: "599 %03d", preferences.serialNumber)
     }

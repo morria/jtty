@@ -12,7 +12,8 @@ struct SettingsView: View {
             Form {
                 station($model)
                 frequencies($model)
-                exchange($model)
+                operating($model)
+                if model.preferences.contestMode { exchange($model) }
                 macros($model)
                 about
             }
@@ -126,6 +127,16 @@ struct SettingsView: View {
         }
     }
 
+    private func operating(_ model: Bindable<AppModel>) -> some View {
+        Section {
+            Toggle("Contest mode", isOn: model.preferences.contestMode)
+        } header: {
+            Text("Operating")
+        } footer: {
+            Text("Contest mode adds the serial number, a queued next station, the contest exchange profiles and WSJT-X's contest quick messages. Off, a contact is a conversation: your call, theirs, and whatever you type.")
+        }
+    }
+
     private func exchange(_ model: Bindable<AppModel>) -> some View {
         Section {
             Picker("Exchange", selection: model.preferences.exchangeProfile) {
@@ -174,22 +185,30 @@ struct SettingsView: View {
         Section {
             ForEach(0..<8, id: \.self) { index in
                 HStack {
-                    Text(NativeMacro.defaultLabels[index])
+                    Text(model.wrappedValue.preferences.macroLabels[index])
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Palette.teal)
                         .frame(width: 92, alignment: .leading)
-                    TextField(NativeMacro.defaultTemplates[index], text: model.preferences.macros[index])
+                    TextField(defaultTemplates(model.wrappedValue.preferences)[index], text: model.preferences.macros[index])
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
                         .monospaced()
                 }
             }
-            Button("Restore defaults") { model.wrappedValue.preferences.macros = NativeMacro.defaultTemplates }
+            Button("Restore defaults") {
+                model.wrappedValue.preferences.macros = defaultTemplates(model.wrappedValue.preferences)
+            }
         } header: {
-            Text("Quick messages")
+            Text(model.wrappedValue.preferences.contestMode ? "Quick messages (contest)" : "Quick messages")
         } footer: {
-            Text("%M is your call, %H the station you are working, %Q the next one, %E the exchange, %N the serial number, %G your grid. These are WSJT-X's F1 to F8 in the same order. The eight standard templates go out as compact native frames; anything else is sent as text.")
+            Text(model.wrappedValue.preferences.contestMode
+                 ? "%M is your call, %H the station you are working, %Q the next one, %E the exchange, %N the serial number, %G your grid. These are WSJT-X's F1 to F8 in the same order. The eight standard templates go out as compact native frames; anything else is sent as text."
+                 : "%M is your call, %H the station you are working, %G your grid. Calls, grids and the control phrases pack into single frames; anything else goes as text at five characters a frame.")
         }
+    }
+
+    private func defaultTemplates(_ preferences: Preferences) -> [String] {
+        preferences.contestMode ? NativeMacro.defaultTemplates : NativeMacro.casualTemplates
     }
 
     private var about: some View {

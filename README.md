@@ -10,9 +10,12 @@ either contest-style exchanges in one or two compact frames or arbitrary
 text at about 30 words per minute.
 
 Plug the phone into a radio with a wired audio interface, tap Listen, and
-the band appears as a transcript: every message heard, building frame by
-frame as it arrives, with the ones on your frequency marked. Reply with one
-of the eight quick messages or type anything into the message field.
+the band appears as one transcript: every message heard on every frequency,
+building frame by frame as it arrives. Many contacts run at once on a JTTY
+band, so a tap on any message, or on the waterfall, opens the conversation
+on that frequency alone, with its own quick messages and message field, and
+New opens a fresh one for calling CQ. Contest mode, off by default, adds
+the serial number, a queued next station and the contest exchanges.
 
 ## The mode
 
