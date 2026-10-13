@@ -14,9 +14,12 @@ struct DismissesKeyboard: ViewModifier {
         content
             .simultaneousGesture(TapGesture().onEnded { hideKeyboard() })
             .toolbar {
+                // Leading, not trailing: iOS 26 floats this over the content
+                // above the keyboard, and the trailing edge is where the
+                // Send button lives.
                 ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
                     Button("Done") { hideKeyboard() }
+                    Spacer()
                 }
             }
     }
