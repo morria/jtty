@@ -89,6 +89,11 @@ final class RadioAudioController {
     private let player = AVAudioPlayerNode()
     private let tunePlayer = AVAudioPlayerNode()
     @ObservationIgnored private var routeObserver: NSObjectProtocol?
+    @ObservationIgnored private var interruptionObserver: NSObjectProtocol?
+    @ObservationIgnored private var configurationObserver: NSObjectProtocol?
+    /// Set while an interruption (a call, Siri, another app's audio) has
+    /// the session; cleared when the receiver is running again.
+    private(set) var isInterrupted = false
     private var converter: AVAudioConverter?
     private var workFormat: AVAudioFormat?
 
@@ -146,7 +151,62 @@ final class RadioAudioController {
             self?.preferUSBInput()
             self?.readRoute()
         }
+        // A call, Siri or another app taking the audio stops the engine, and
+        // nothing restarts it unless we do. The same for a configuration
+        // change, which is what plugging the radio in or out looks like to
+        // the engine. Either one left unhandled is a receiver that went quiet
+        // in the background without saying so.
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(), queue: .main
+        ) { [weak self] note in
+            guard let self, let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            switch type {
+            case .began:
+                log.info("audio interrupted")
+                isInterrupted = true
+            case .ended:
+                log.info("audio interruption ended")
+                resume()
+            @unknown default:
+                break
+            }
+        }
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main
+        ) { [weak self] _ in
+            log.info("audio engine configuration changed")
+            self?.resume()
+        }
         log.info("audio started, input \(inputFormat.sampleRate, privacy: .public) Hz, in \(self.inputRoute, privacy: .public), out \(self.outputRoute, privacy: .public)")
+    }
+
+    /// Bring the receiver back after an interruption or a configuration
+    /// change. A full stop and start: the input format may have changed, and
+    /// the converter and tap were built for the old one. Messages in
+    /// progress are lost, which is the lesser evil.
+    private func resume() {
+        guard isRunning else { return }
+        let wasRecording = isRecording
+        stop()
+        do {
+            try start()
+            if wasRecording { try? toggleRecording() }
+            isInterrupted = false
+            log.info("audio resumed, in \(self.inputRoute, privacy: .public), out \(self.outputRoute, privacy: .public)")
+        } catch {
+            // The hardware may not be ready the instant the interruption
+            // ends; try once more shortly.
+            log.error("audio resume failed: \(error.localizedDescription, privacy: .public)")
+            isRunning = true
+            isInterrupted = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, isInterrupted else { return }
+                isRunning = false
+                if (try? start()) != nil { isInterrupted = false }
+            }
+        }
     }
 
     /// Where the audio is going. Shown on screen because it is the first
@@ -183,11 +243,14 @@ final class RadioAudioController {
         audioEngine.stop()
         audioEngine.detach(player)
         audioEngine.detach(tunePlayer)
-        if let routeObserver {
-            NotificationCenter.default.removeObserver(routeObserver)
-            self.routeObserver = nil
+        for observer in [routeObserver, interruptionObserver, configurationObserver].compactMap({ $0 }) {
+            NotificationCenter.default.removeObserver(observer)
         }
+        routeObserver = nil
+        interruptionObserver = nil
+        configurationObserver = nil
         isTuning = false
+        isInterrupted = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         dsp.sync {
             receiver = nil
