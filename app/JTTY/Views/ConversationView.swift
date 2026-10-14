@@ -10,6 +10,7 @@ struct ConversationView: View {
     var callsign: String?
 
     @State private var draft = ""
+    @State private var contactToLog: LogEntry?
     @FocusState private var composing: Bool
 
     private var lines: [TranscriptLine] { model.lines(near: frequency) }
@@ -28,6 +29,9 @@ struct ConversationView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 ListenButton()
             }
+        }
+        .sheet(item: $contactToLog) { entry in
+            LogEntryEditor(entry: entry, isNew: true) { model.record($0) }
         }
         .onAppear { model.enterConversation(at: frequency, callsign: callsign) }
         .onDisappear { if model.activeConversation == frequency { model.leaveConversation() } }
@@ -55,7 +59,9 @@ struct ConversationView: View {
                     ForEach(lines) { line in
                         TranscriptRow(line: line, showsFrequency: false)
                             .id(line.id)
-                            .contextMenu { ConversationContextMenu(line: line) }
+                            .contextMenu {
+                                ConversationContextMenu(line: line) { contactToLog = model.draftContact(from: line) }
+                            }
                     }
                 }
                 .padding(.horizontal)
@@ -254,12 +260,16 @@ struct RouteWarning: View {
 struct ConversationContextMenu: View {
     @Environment(AppModel.self) private var model
     let line: TranscriptLine
+    var logContact: () -> Void
 
     var body: some View {
         if let callsign = line.callsign, callsign != model.preferences.callsign {
             Button("Call \(callsign)", systemImage: "person.wave.2") {
                 model.adopt(callsign: callsign, frequency: line.kind == .received ? line.frequency : nil)
             }
+        }
+        if line.kind == .received {
+            Button("Log contact…", systemImage: "book.closed") { logContact() }
         }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
     }

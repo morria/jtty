@@ -15,6 +15,7 @@ struct SettingsView: View {
                 operating($model)
                 if model.preferences.contestMode { exchange($model) }
                 macros($model)
+                logging($model)
                 about
             }
             .navigationTitle("Settings")
@@ -204,6 +205,43 @@ struct SettingsView: View {
             Text(model.wrappedValue.preferences.contestMode
                  ? "%M is your call, %H the station you are working, %Q the next one, %E the exchange, %N the serial number, %G your grid. These are WSJT-X's F1 to F8 in the same order. The eight standard templates go out as compact native frames; anything else is sent as text."
                  : "%M is your call, %H the station you are working, %G your grid. Calls, grids and the control phrases pack into single frames; anything else goes as text at five characters a frame.")
+        }
+    }
+
+    @State private var qrzKey = SecretStore().load(.qrzLogbookKey) ?? ""
+    @State private var qrzStatus: String?
+
+    private func logging(_ model: Bindable<AppModel>) -> some View {
+        Section {
+            Toggle("Upload to QRZ", isOn: model.preferences.logsToQRZ)
+                .onChange(of: model.wrappedValue.preferences.logsToQRZ) { _, on in
+                    if on { model.wrappedValue.uploadPending() }
+                }
+            if model.wrappedValue.preferences.logsToQRZ {
+                SecureField("Logbook API key", text: $qrzKey)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onChange(of: qrzKey) { _, key in
+                        SecretStore().save(key, for: .qrzLogbookKey)
+                        qrzStatus = nil
+                    }
+                Button(qrzStatus ?? "Check key") {
+                    Task {
+                        do {
+                            let status = try await QRZLogbookClient().status(key: qrzKey)
+                            qrzStatus = "OK: \(status["COUNT"] ?? "?") contacts in \(status["BOOK_NAME"] ?? "the logbook")"
+                            model.wrappedValue.uploadPending()
+                        } catch {
+                            qrzStatus = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                        }
+                    }
+                }
+                .disabled(qrzKey.isEmpty)
+            }
+        } header: {
+            Text("Logging")
+        } footer: {
+            Text("Contacts are written to the log on the phone first and uploaded afterwards, so one is never lost to a dead connection. The key is the logbook's API key from its settings page at qrz.com; it needs an XML subscription. The Log tab marks what has been uploaded.")
         }
     }
 

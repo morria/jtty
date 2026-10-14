@@ -67,6 +67,12 @@ struct Preferences: Codable, Equatable, Sendable {
     }
     var macroLabels: [String] { contestMode ? NativeMacro.defaultLabels : NativeMacro.casualLabels }
 
+    /// Upload logged contacts to the QRZ logbook. The key lives in the
+    /// keychain, not here.
+    var logsToQRZ = false
+    /// Whether the one-time offer to set QRZ up has been made.
+    var qrzOfferMade = false
+
     var hasCompletedSetup = false
 
     var canTransmit: Bool {
@@ -125,6 +131,8 @@ struct Preferences: Codable, Equatable, Sendable {
         contestMode = get(.contestMode, defaults.contestMode)
         contestMacros = get(.contestMacros, defaults.contestMacros)
         casualMacros = get(.casualMacros, defaults.casualMacros)
+        logsToQRZ = get(.logsToQRZ, defaults.logsToQRZ)
+        qrzOfferMade = get(.qrzOfferMade, defaults.qrzOfferMade)
         hasCompletedSetup = get(.hasCompletedSetup, defaults.hasCompletedSetup)
     }
 

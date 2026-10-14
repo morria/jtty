@@ -2,8 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
-    @State private var selectedTab = RootView.initialTab
-
+    @Environment(\.scenePhase) private var scenePhase
     /// `-tab log` or `-tab settings` on a debug launch opens that tab.
     private static var initialTab: Int {
         #if DEBUG
@@ -24,6 +23,16 @@ struct RootView: View {
         }
         .animation(.smooth, value: model.preferences.hasCompletedSetup)
         .tint(Palette.teal)
+        .onAppear { model.selectedTab = Self.initialTab }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.uploadPending() }
+        }
+        .alert("Upload contacts to QRZ?", isPresented: Binding(get: { model.offersQRZ }, set: { model.offersQRZ = $0 })) {
+            Button("Set up in Settings") { model.selectedTab = 2 }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Each logged contact can go straight to your QRZ logbook. It needs the logbook's API key, which is on its settings page at qrz.com, and an XML subscription.")
+        }
         .alert(
             model.errorMessage ?? "",
             isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.dismissError() } })
@@ -33,7 +42,8 @@ struct RootView: View {
     }
 
     private var tabs: some View {
-        TabView(selection: $selectedTab) {
+        @Bindable var model = model
+        return TabView(selection: $model.selectedTab) {
             OperateView()
                 .tabItem { Label("Operate", systemImage: "antenna.radiowaves.left.and.right") }
                 .tag(0)

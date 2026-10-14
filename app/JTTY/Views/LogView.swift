@@ -88,7 +88,19 @@ struct LogRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(entry.band.rawValue).font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(entry.band.rawValue).font(.caption).foregroundStyle(.secondary)
+                if !entry.theirGrid.isEmpty || !entry.state.isEmpty {
+                    Text([entry.theirGrid, entry.state].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            if entry.uploadedToQRZ {
+                Image(systemName: "checkmark.icloud")
+                    .font(.caption)
+                    .foregroundStyle(Palette.teal)
+                    .accessibilityLabel("Uploaded to QRZ")
+            }
         }
         .contentShape(Rectangle())
     }
@@ -96,6 +108,7 @@ struct LogRow: View {
 
 struct LogEntryEditor: View {
     @State var entry: LogEntry
+    var isNew = false
     let onSave: (LogEntry) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -113,6 +126,28 @@ struct LogEntryEditor: View {
                         ForEach(Band.allCases) { Text($0.rawValue).tag($0) }
                     }
                 }
+                Section("Location") {
+                    LabeledContent("Name") {
+                        TextField("", text: $entry.name).multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.words)
+                    }
+                    LabeledContent("Grid") {
+                        TextField("FN42", text: $entry.theirGrid).multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    }
+                    LabeledContent("QTH") {
+                        TextField("Town", text: $entry.qth).multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.words)
+                    }
+                    LabeledContent("State") {
+                        TextField("", text: $entry.state).multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    }
+                    LabeledContent("Country") {
+                        TextField("", text: $entry.country).multilineTextAlignment(.trailing)
+                            .textInputAutocapitalization(.words)
+                    }
+                }
                 Section("Exchange") {
                     LabeledContent("Sent") {
                         TextField("599 001", text: $entry.exchangeSent).multilineTextAlignment(.trailing)
@@ -125,17 +160,19 @@ struct LogEntryEditor: View {
                     TextField("Notes", text: $entry.notes)
                 }
             }
-            .navigationTitle("Contact")
+            .navigationTitle(isNew ? "Log contact" : "Contact")
             .navigationBarTitleDisplayMode(.inline)
             .dismissesKeyboard()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button(isNew ? "Log" : "Save") {
                         entry.callsign = entry.callsign.trimmingCharacters(in: .whitespaces).uppercased()
+                        entry.theirGrid = entry.theirGrid.trimmingCharacters(in: .whitespaces).uppercased()
                         onSave(entry)
                         dismiss()
                     }
+                    .disabled(entry.callsign.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }

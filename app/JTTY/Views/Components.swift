@@ -48,11 +48,10 @@ struct StatusChip: View {
 
 /// The last few seconds of the passband, 200 to 2800 Hz across, time down.
 ///
-/// Drawn into a bitmap rather than as shapes: a line is nine hundred
-/// values and there are ninety of them, and a view that redraws that many
-/// rectangles ten times a second is a view that drops frames.
+/// Takes the bitmap the renderer keeps up to date, so this view's own work
+/// is drawing one image and three markers.
 struct WaterfallView: View {
-    let lines: [RadioAudioController.SpectrumLine]
+    let image: CGImage?
     let rxFrequency: Double
     let txFrequency: Double
     var onTap: ((Double) -> Void)?
@@ -63,7 +62,7 @@ struct WaterfallView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                if let image = Self.image(for: lines) {
+                if let image {
                     Image(decorative: image, scale: 1)
                         .resizable()
                         .interpolation(.none)
@@ -109,56 +108,4 @@ struct WaterfallView: View {
         }
     }
 
-    /// Lines to pixels, newest at the bottom.
-    private static func image(for lines: [RadioAudioController.SpectrumLine]) -> CGImage? {
-        guard let width = lines.first?.magnitudes.count, width > 0 else { return nil }
-        let height = AppModel.spectrumHistory
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        // Level the floor per image: the median of everything is noise, and
-        // the top of the range is a strong signal.
-        let all = lines.flatMap(\.magnitudes).sorted()
-        let floor = all[all.count / 2]
-        let ceiling = max(floor + 30, all[all.count * 99 / 100])
-        for (row, line) in lines.enumerated() {
-            let y = height - lines.count + row
-            guard y >= 0, line.magnitudes.count == width else { continue }
-            for (x, value) in line.magnitudes.enumerated() {
-                let t = max(0, min(1, (value - floor) / (ceiling - floor)))
-                let (r, g, b) = colour(t)
-                let offset = (y * width + x) * 4
-                pixels[offset] = r
-                pixels[offset + 1] = g
-                pixels[offset + 2] = b
-                pixels[offset + 3] = 255
-            }
-        }
-        let data = Data(pixels)
-        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
-        return CGImage(
-            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
-        )
-    }
-
-    /// Slate through teal to cream, the palette's own waterfall.
-    private static func colour(_ t: Float) -> (UInt8, UInt8, UInt8) {
-        let stops: [(Float, (Float, Float, Float))] = [
-            (0.0, (0.098, 0.137, 0.169)),
-            (0.45, (0.243, 0.514, 0.584)),
-            (0.75, (0.388, 0.702, 0.651)),
-            (1.0, (0.949, 0.906, 0.827)),
-        ]
-        var lower = stops[0], upper = stops[stops.count - 1]
-        for i in 0..<stops.count - 1 where t >= stops[i].0 && t <= stops[i + 1].0 {
-            lower = stops[i]
-            upper = stops[i + 1]
-            break
-        }
-        let span = max(upper.0 - lower.0, 0.001)
-        let f = (t - lower.0) / span
-        func mix(_ a: Float, _ b: Float) -> UInt8 { UInt8(max(0, min(255, (a + (b - a) * f) * 255))) }
-        return (mix(lower.1.0, upper.1.0), mix(lower.1.1, upper.1.1), mix(lower.1.2, upper.1.2))
-    }
 }

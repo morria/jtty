@@ -7,6 +7,7 @@ struct OperateView: View {
     @Environment(AppModel.self) private var model
     @State private var showsWaterfall = true
     @State private var path: [Destination] = OperateView.initialPath
+    @State private var contactToLog: LogEntry?
 
     /// `-conversation 1507` on a debug launch opens that frequency.
     private static var initialPath: [Destination] {
@@ -29,32 +30,7 @@ struct OperateView: View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 if showsWaterfall {
-                    WaterfallView(
-                        lines: model.spectrumLines,
-                        rxFrequency: model.receiveFrequency,
-                        txFrequency: model.preferences.txFrequency
-                    ) { hz in
-                        path.append(Destination(frequency: hz))
-                    }
-                    .frame(height: 96)
-                    .overlay(alignment: .topTrailing) {
-                        if model.isListening {
-                            HStack(spacing: 8) {
-                                if model.audio.isRecording {
-                                    Label("REC", systemImage: "record.circle.fill")
-                                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                                        .foregroundStyle(Palette.salmon)
-                                        .symbolEffect(.pulse)
-                                }
-                                InputLevelMeter(level: model.audio.inputLevel)
-                            }
-                            .padding(6)
-                            .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
-                            .padding(6)
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 6)
+                    BandWaterfall { hz in path.append(Destination(frequency: hz)) }
                 }
                 transcript
                 VStack(spacing: 8) {
@@ -68,6 +44,9 @@ struct OperateView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: Destination.self) { destination in
                 ConversationView(frequency: destination.frequency, callsign: destination.callsign)
+            }
+            .sheet(item: $contactToLog) { entry in
+                LogEntryEditor(entry: entry, isNew: true) { model.record($0) }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -166,7 +145,45 @@ struct OperateView: View {
         Button("Open \(Int(line.frequency)) Hz", systemImage: "bubble.left.and.bubble.right") {
             path.append(Destination(frequency: line.frequency))
         }
+        if line.kind == .received {
+            Button("Log contact…", systemImage: "book.closed") { contactToLog = model.draftContact(from: line) }
+        }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
+    }
+}
+
+/// The waterfall and the level meter, in a view of their own so their ten
+/// updates a second never touch the transcript above them.
+struct BandWaterfall: View {
+    @Environment(AppModel.self) private var model
+    let onTap: (Double) -> Void
+
+    var body: some View {
+        WaterfallView(
+            image: model.waterfall.image,
+            rxFrequency: model.receiveFrequency,
+            txFrequency: model.preferences.txFrequency,
+            onTap: onTap
+        )
+        .frame(height: 96)
+        .overlay(alignment: .topTrailing) {
+            if model.isListening {
+                HStack(spacing: 8) {
+                    if model.audio.isRecording {
+                        Label("REC", systemImage: "record.circle.fill")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(Palette.salmon)
+                            .symbolEffect(.pulse)
+                    }
+                    InputLevelMeter(level: model.audio.inputLevel)
+                }
+                .padding(6)
+                .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                .padding(6)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 6)
     }
 }
 

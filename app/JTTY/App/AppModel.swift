@@ -45,12 +45,20 @@ final class AppModel {
     private var suppressesSaving = false
     let audio = RadioAudioController()
     let logbook = Logbook()
+    /// Which tab is showing; set to move the operator to Settings.
+    var selectedTab = 0
+    /// The one-time offer to upload contacts to QRZ.
+    var offersQRZ = false
 
     private(set) var transcript: [TranscriptLine] = []
     /// What the receiver has looked at this session.
     private(set) var statistics = JTTYReceiver.Statistics()
-    private(set) var spectrumLines: [RadioAudioController.SpectrumLine] = []
+    /// Recent spectrum, for choosing a clear frequency. Not observed: the
+    /// screen reads the rendered waterfall instead, so ten updates a second
+    /// here do not redraw the transcript.
+    @ObservationIgnored private(set) var spectrumLines: [RadioAudioController.SpectrumLine] = []
     static let spectrumHistory = 90
+    let waterfall = WaterfallRenderer()
 
     /// The station being worked and the one waiting.
     var theirCall = ""
@@ -175,7 +183,9 @@ final class AppModel {
                     magnitudes[bin + k] += Float(strength) * Float.random(in: 0.3...1, using: &generator)
                 }
             }
-            spectrumLines.append(RadioAudioController.SpectrumLine(magnitudes: magnitudes))
+            let line = RadioAudioController.SpectrumLine(magnitudes: magnitudes)
+            spectrumLines.append(line)
+            waterfall.append(line)
         }
     }
     #endif
@@ -245,6 +255,7 @@ final class AppModel {
     private func handle(_ line: RadioAudioController.SpectrumLine) {
         spectrumLines.append(line)
         if spectrumLines.count > Self.spectrumHistory { spectrumLines.removeFirst() }
+        waterfall.append(line)
     }
 
     func clearTranscript() {
@@ -499,6 +510,24 @@ final class AppModel {
         return ""
     }
 
+    /// A contact read out of a heard message and the conversation around
+    /// it, for the operator to check and save.
+    func draftContact(from line: TranscriptLine) -> LogEntry {
+        let draft = ContactParser.draft(
+            from: line, conversation: lines(near: line.frequency),
+            myCallsign: preferences.callsign, myGrid: preferences.grid
+        )
+        return LogEntry(
+            callsign: draft.callsign.isEmpty ? theirCall : draft.callsign,
+            time: draft.time, band: preferences.band,
+            frequency: preferences.dialFrequency + Int(line.frequency),
+            exchangeSent: draft.exchangeSent.isEmpty ? lastExchangeSent : draft.exchangeSent,
+            exchangeReceived: draft.exchangeReceived,
+            myCallsign: preferences.callsign, myGrid: preferences.grid,
+            theirGrid: draft.theirGrid, name: draft.name
+        )
+    }
+
     func logContact() {
         let call = theirCall.trimmingCharacters(in: .whitespaces).uppercased()
         guard !call.isEmpty else { return }
@@ -508,7 +537,27 @@ final class AppModel {
             exchangeSent: lastExchangeSent, exchangeReceived: lastExchangeReceived,
             myCallsign: preferences.callsign, myGrid: preferences.grid
         )
+        record(entry)
+    }
+
+    /// Put a contact in the log, send it on to QRZ if that is set up, and
+    /// the first time, offer to set it up.
+    func record(_ entry: LogEntry) {
         logbook.add(entry)
+        if preferences.logsToQRZ {
+            let uploader = LogUploader(enabled: true)
+            Task { await uploader.upload(entry, into: logbook) }
+        } else if !preferences.qrzOfferMade {
+            preferences.qrzOfferMade = true
+            offersQRZ = true
+        }
+    }
+
+    /// Anything not yet uploaded, retried when the app comes forward.
+    func uploadPending() {
+        guard preferences.logsToQRZ else { return }
+        let uploader = LogUploader(enabled: true)
+        Task { await uploader.uploadPending(from: logbook) }
     }
 
     /// Answer a heard station: their call goes in Their call, or into Next
