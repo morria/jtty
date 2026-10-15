@@ -20,6 +20,9 @@ struct TranscriptLine: Identifiable, Equatable {
     var frameCount: Int
     /// Whether the message came in near the receive frequency.
     var isOnFrequency: Bool
+    /// For a sent message: the receiver heard it back through the radio's
+    /// monitor, which is the proof it went out. The SNR is the echo's.
+    var heardBack = false
 
     /// The first thing in the message that looks like a callsign, compound
     /// and portable calls included.
@@ -157,18 +160,22 @@ final class AppModel {
         }
         let lines: [(String, Double, Float, Int, Bool, TranscriptLine.Kind)] = [
             ("CQ K1ABC CQ", 1507, -3, 1, false, .received),
+            ("CQ NA5M EM11", 2210, -14, 2, false, .received),
             ("RAN ALL NIGHT ON BAND NOISE - NO FALSE DECODES!", 1507, -9, 10, false, .received),
-            ("CQ W1UE CQ", 1518, -11, 1, false, .received),
+            ("CQ W1UE CQ", 820, -11, 1, false, .received),
             ("CQ W2ASM CQ", 1500, 0, 1, false, .sent),
+            ("K1ABC AGN?", 820, -6, 1, false, .received),
             ("W9XYZ", 1502, 4, 1, false, .received),
             ("W9XYZ 599 107", 1500, 0, 2, false, .sent),
+            ("NA5M FN30AQ", 2210, 17, 3, false, .sent),
             ("599 0", 1502, 5, 1, true, .received),
         ]
         for (index, line) in lines.enumerated() {
+            let heard = line.5 == .sent && line.2 != 0
             transcript.append(TranscriptLine(
                 id: Int64(1000 + index), kind: line.5, text: line.0, frequency: line.1,
-                snr: line.5 == .sent ? nil : line.2, time: now.addingTimeInterval(Double(index - lines.count) * 7),
-                isInProgress: line.4, frameCount: line.3, isOnFrequency: abs(line.1 - 1500) < 100
+                snr: line.5 == .sent && !heard ? nil : line.2, time: now.addingTimeInterval(Double(index - lines.count) * 7),
+                isInProgress: line.4, frameCount: line.3, isOnFrequency: abs(line.1 - 1500) < 100, heardBack: heard
             ))
         }
         var generator = SystemRandomNumberGenerator()
@@ -237,6 +244,7 @@ final class AppModel {
         for event in events {
             guard case .message(let update) = event else { continue }
             let time = sessionStart.addingTimeInterval(update.startTime)
+            if absorbEcho(update, at: time) { continue }
             let onFrequency = abs(Double(update.frequency) - receiveFrequency) < preferences.rxTolerance
             let line = TranscriptLine(
                 id: update.id, kind: .received, text: update.text, frequency: Double(update.frequency),
@@ -250,6 +258,39 @@ final class AppModel {
             }
         }
         if transcript.count > 500 { transcript.removeFirst(transcript.count - 500) }
+    }
+
+    /// Our own transmission coming back through the radio: the same text,
+    /// on the transmit frequency, starting within a minute of being sent.
+    /// Shown once, as the sent message, marked heard, rather than twice.
+    private func absorbEcho(_ update: MessageUpdate, at time: Date) -> Bool {
+        guard let index = transcript.lastIndex(where: { line in
+            line.kind == .sent &&
+                abs(line.frequency - Double(update.frequency)) < 25 &&
+                time.timeIntervalSince(line.time) > -3 && time.timeIntervalSince(line.time) < 90 &&
+                Self.isEcho(update.text, of: line.text)
+        }) else { return false }
+        if update.isComplete || Self.normalize(update.text) == Self.normalize(transcript[index].text) {
+            transcript[index].heardBack = true
+            transcript[index].snr = update.snr
+        }
+        // An earlier partial of the same echo may have got through as a
+        // received line before the text was long enough to match.
+        transcript.removeAll { $0.kind == .received && $0.id == update.id }
+        return true
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.uppercased().split(separator: " ").joined(separator: " ")
+    }
+
+    /// Whether what came in is what went out, or the beginning of it while
+    /// the rest is still arriving. The first text frame alone is five
+    /// characters, so anything shorter than three is not evidence.
+    static func isEcho(_ heard: String, of sent: String) -> Bool {
+        let h = normalize(heard), s = normalize(sent)
+        guard h.count >= 3 else { return false }
+        return s == h || s.hasPrefix(h) || s.hasPrefix(h.replacingOccurrences(of: " ... ", with: " "))
     }
 
     private func handle(_ line: RadioAudioController.SpectrumLine) {
@@ -272,6 +313,11 @@ final class AppModel {
 
     func lines(near frequency: Double) -> [TranscriptLine] {
         transcript.filter { Self.line($0, isNear: frequency) }
+    }
+
+    /// The conversations on the band, most recent first.
+    var bands: [FrequencyBand] {
+        FrequencyBand.bands(from: transcript, extra: emptyConversations, halfWidth: Self.conversationHalfWidth)
     }
 
     /// Open the conversation at a frequency: the transmit frequency moves

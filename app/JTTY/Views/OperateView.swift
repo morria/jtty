@@ -6,6 +6,8 @@ import SwiftUI
 struct OperateView: View {
     @Environment(AppModel.self) private var model
     @State private var showsWaterfall = true
+    /// Conversations by frequency, or everything in one stream.
+    @AppStorage("showsEverything") private var showsEverything = false
     @State private var path: [Destination] = OperateView.initialPath
     @State private var contactToLog: LogEntry?
 
@@ -32,7 +34,11 @@ struct OperateView: View {
                 if showsWaterfall {
                     BandWaterfall { hz in path.append(Destination(frequency: hz)) }
                 }
-                transcript
+                if showsEverything {
+                    transcript
+                } else {
+                    conversations
+                }
                 VStack(spacing: 8) {
                     TransmitBanner()
                     RouteWarning()
@@ -51,6 +57,10 @@ struct OperateView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
+                        Picker("Show", selection: $showsEverything) {
+                            Label("Conversations", systemImage: "bubble.left.and.bubble.right").tag(false)
+                            Label("Everything", systemImage: "text.alignleft").tag(true)
+                        }
                         Toggle("Waterfall", isOn: $showsWaterfall)
                         Button("Clear", systemImage: "trash") { model.clearTranscript() }
                             .disabled(model.transcript.isEmpty)
@@ -80,6 +90,32 @@ struct OperateView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Conversations
+
+    private var conversations: some View {
+        let bands = model.bands
+        return List {
+            if bands.isEmpty {
+                emptyState
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            ForEach(bands) { band in
+                Button {
+                    path.append(Destination(frequency: band.frequency, callsign: band.callsigns(excluding: model.preferences.callsign).first))
+                } label: {
+                    BandRow(band: band, myCallsign: model.preferences.callsign, isTransmitFrequency: abs(band.frequency - model.preferences.txFrequency) <= AppModel.conversationHalfWidth)
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .contextMenu {
+                    if let line = band.latest { contextMenu(for: line) }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 
     // MARK: - Transcript
@@ -124,7 +160,9 @@ struct OperateView: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
             Text(model.isListening
-                 ? "Everything heard on the band appears here. Tap a message to open its frequency, or New to call CQ."
+                 ? (showsEverything
+                    ? "Everything heard on the band appears here. Tap a message to open its frequency, or New to call CQ."
+                    : "Each frequency with traffic becomes a conversation here. Tap one to join it, or New to call CQ.")
                  : "Connect the radio's audio and tap Listen.")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
@@ -149,6 +187,97 @@ struct OperateView: View {
             Button("Log contact…", systemImage: "book.closed") { contactToLog = model.draftContact(from: line) }
         }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
+    }
+}
+
+/// One conversation in the list: the frequency, who is there, and the
+/// latest thing said.
+struct BandRow: View {
+    let band: FrequencyBand
+    let myCallsign: String
+    let isTransmitFrequency: Bool
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
+    }()
+
+    private var title: String {
+        let calls = band.callsigns(excluding: myCallsign)
+        return calls.isEmpty ? "\(Int(band.frequency)) Hz" : calls.prefix(3).joined(separator: " · ")
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // The frequency, where a messaging app would put a face.
+            VStack(spacing: 2) {
+                Text("\(Int(band.frequency))")
+                    .font(.system(.subheadline, design: .monospaced).weight(.semibold))
+                Text("Hz")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 56, height: 48)
+            .background(
+                (isTransmitFrequency ? Palette.teal.opacity(0.18) : Color(.tertiarySystemFill)),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isTransmitFrequency ? Palette.teal : .clear, lineWidth: 1.5)
+            )
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if let latest = band.latest {
+                        Text(Self.timeFormatter.string(from: latest.time))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let latest = band.latest {
+                    HStack(spacing: 4) {
+                        Text((latest.kind == .sent ? "You: " : "") + latest.text)
+                            .font(.subheadline.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        if latest.isInProgress {
+                            Image(systemName: "ellipsis")
+                                .font(.caption)
+                                .symbolEffect(.variableColor.iterative.reversing)
+                                .foregroundStyle(Palette.teal)
+                                .accessibilityLabel("Still arriving")
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        if let snr = latest.snr {
+                            Text(String(format: "%+.0f dB", snr))
+                                .foregroundStyle(Palette.signalColor(for: snr))
+                        }
+                        Text("\(band.lines.count) message\(band.lines.count == 1 ? "" : "s")")
+                        if isTransmitFrequency {
+                            Text("TX").foregroundStyle(Palette.teal).fontWeight(.semibold)
+                        }
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                } else {
+                    Text("Nothing heard yet")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(Int(band.frequency)) hertz, \(band.latest?.text ?? "nothing heard yet")")
     }
 }
 
@@ -301,7 +430,12 @@ struct TranscriptRow: View {
                         Text("\(Int(line.frequency)) Hz")
                             .foregroundStyle(isSent ? Color.white.opacity(0.9) : Palette.teal)
                     }
-                    if let snr = line.snr {
+                    if isSent, line.heardBack {
+                        // The radio's monitor heard it: it went out.
+                        Label(line.snr.map { String(format: "heard %+.0f dB", $0) } ?? "heard", systemImage: "checkmark")
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(Color.white.opacity(0.9))
+                    } else if let snr = line.snr {
                         Text(String(format: "%+.0f dB", snr))
                             .foregroundStyle(isSent ? Color.white.opacity(0.8) : Palette.signalColor(for: snr))
                     }
