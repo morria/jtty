@@ -251,6 +251,7 @@ struct SettingsView: View {
 
     private var about: some View {
         Section {
+            LabeledContent("Version", value: "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
             LabeledContent("Mode", value: "JTTY, 4-GFSK 31.25 baud")
             LabeledContent("Frame", value: "1.888 s, 127 Hz")
             Link("JTTY in WSJT-X", destination: URL(string: "https://wsjtx.github.io/wsjtx/")!)
