@@ -83,49 +83,68 @@ struct SettingsView: View {
                 Slider(value: model.preferences.txFrequency, in: 300...2600, step: 10)
             }
             Toggle("Choose a clear frequency", isOn: model.preferences.choosesClearFrequency)
-            Toggle("Receive on the transmit frequency", isOn: model.preferences.rxFollowsTx)
-            if !model.wrappedValue.preferences.rxFollowsTx {
-                VStack(alignment: .leading) {
-                    LabeledContent("Receive at") {
-                        Text("\(Int(model.wrappedValue.preferences.rxFrequency)) Hz").monospacedDigit()
-                    }
-                    Slider(value: model.preferences.rxFrequency, in: 300...2600, step: 10)
-                }
-            }
-            VStack(alignment: .leading) {
-                LabeledContent("Receive tolerance") {
-                    Text("±\(Int(model.wrappedValue.preferences.rxTolerance)) Hz").monospacedDigit()
-                }
-                Slider(value: model.preferences.rxTolerance, in: 20...500, step: 10)
-            }
-            Toggle("Decode the whole passband", isOn: model.preferences.searchesWholePassband)
-            VStack(alignment: .leading) {
-                LabeledContent("Transmit level") {
-                    Text("\(Int(model.wrappedValue.preferences.txGain * 100))%").monospacedDigit()
-                }
-                Slider(value: model.preferences.txGain, in: 0.05...1, step: 0.05)
-            }
+            NavigationLink("Advanced audio") { advancedAudio(model) }
         } header: {
             Text("Audio")
         } footer: {
             Text("""
                 Now using \(model.wrappedValue.audio.inputRoute) for input and \(model.wrappedValue.audio.outputRoute) for output. \
-                A radio connected over USB should appear by name in both; the phone's own microphone \
-                and speaker mean nothing is reaching the radio.
+                A radio connected over USB should appear by name in both.
 
                 With a clear frequency chosen, calling CQ first moves the transmit frequency to the \
-                quietest spot within 300 Hz, judged from the last few seconds of the waterfall. \
-                Answering a station always moves onto their frequency. Turn it off to stay exactly \
-                where the slider is.
-
-                Signals within the tolerance of the receive frequency are searched hardest and marked \
-                in the transcript. With the whole passband on, everything from 200 to 2800 Hz is \
-                decoded as well, which costs some battery.
-
-                Set the transmit level so the radio shows little or no ALC movement. A signal driven \
-                into compression is a wide one, and you will not hear it happening.
+                quietest spot within 300 Hz. Answering a station always moves onto their frequency.
                 """)
         }
+    }
+
+    /// The receiver's reach and the transmit level: what the tuner of the
+    /// station touches, kept off the first page.
+    private func advancedAudio(_ model: Bindable<AppModel>) -> some View {
+        Form {
+            Section {
+                Toggle("Receive on the transmit frequency", isOn: model.preferences.rxFollowsTx)
+                if !model.wrappedValue.preferences.rxFollowsTx {
+                    VStack(alignment: .leading) {
+                        LabeledContent("Receive at") {
+                            Text("\(Int(model.wrappedValue.preferences.rxFrequency)) Hz").monospacedDigit()
+                        }
+                        Slider(value: model.preferences.rxFrequency, in: 300...2600, step: 10)
+                    }
+                }
+                VStack(alignment: .leading) {
+                    LabeledContent("Receive tolerance") {
+                        Text("±\(Int(model.wrappedValue.preferences.rxTolerance)) Hz").monospacedDigit()
+                    }
+                    Slider(value: model.preferences.rxTolerance, in: 20...500, step: 10)
+                }
+                Toggle("Decode the whole passband", isOn: model.preferences.searchesWholePassband)
+            } header: {
+                Text("Receiver")
+            } footer: {
+                Text("""
+                    Signals within the tolerance of the receive frequency are searched hardest and marked \
+                    in the transcript. With the whole passband on, everything from 200 to 2800 Hz is \
+                    decoded as well, which costs some battery.
+                    """)
+            }
+            Section {
+                VStack(alignment: .leading) {
+                    LabeledContent("Transmit level") {
+                        Text("\(Int(model.wrappedValue.preferences.txGain * 100))%").monospacedDigit()
+                    }
+                    Slider(value: model.preferences.txGain, in: 0.05...1, step: 0.05)
+                }
+            } header: {
+                Text("Transmitter")
+            } footer: {
+                Text("""
+                    Set the transmit level so the radio shows little or no ALC movement. A signal driven \
+                    into compression is a wide one, and you will not hear it happening.
+                    """)
+            }
+        }
+        .navigationTitle("Advanced audio")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func operating(_ model: Bindable<AppModel>) -> some View {

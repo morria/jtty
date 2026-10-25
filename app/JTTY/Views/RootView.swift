@@ -25,8 +25,11 @@ struct RootView: View {
         .tint(Palette.teal)
         .onAppear { model.selectedTab = Self.initialTab }
         .onChange(of: scenePhase) { _, phase in
+            model.isForeground = phase == .active
             if phase == .active { model.uploadPending() }
         }
+        // A message for us: the one thing worth a tap on the wrist.
+        .sensoryFeedback(.success, trigger: model.repliesToMe)
         .alert("Upload contacts to QRZ?", isPresented: Binding(get: { model.offersQRZ }, set: { model.offersQRZ = $0 })) {
             Button("Set up in Settings") { model.selectedTab = 2 }
             Button("Not now", role: .cancel) {}
@@ -45,7 +48,8 @@ struct RootView: View {
         @Bindable var model = model
         return TabView(selection: $model.selectedTab) {
             OperateView()
-                .tabItem { Label("Operate", systemImage: "antenna.radiowaves.left.and.right") }
+                .tabItem { Label("Messages", systemImage: "bubble.left.and.bubble.right") }
+                .badge(model.unreadConversations)
                 .tag(0)
             LogView()
                 .tabItem { Label("Log", systemImage: "book.closed") }

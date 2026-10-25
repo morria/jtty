@@ -2,6 +2,7 @@ import Foundation
 import JTTYLib
 import OSLog
 import SwiftUI
+import UserNotifications
 
 private let log = Logger(subsystem: "com.w2asm.jtty", category: "model")
 
@@ -74,6 +75,17 @@ final class AppModel {
     /// channel over.
     var activeConversation: Double?
     static let conversationHalfWidth: Double = 60
+    /// Whether the app is on screen. Off screen, a message for us becomes
+    /// a notification instead of a haptic.
+    var isForeground = true
+    /// When each conversation was last read, by frequency. Matched within
+    /// the conversation half width, since a conversation drifts a few hertz.
+    private var lastRead: [Double: Date] = [:]
+    /// Bumped each time a complete message addressed to us arrives, for a
+    /// haptic. The count itself means nothing.
+    private(set) var repliesToMe = 0
+    /// Received lines already announced, so a message is announced once.
+    private var announced: Set<Int64> = []
     /// Conversations opened by hand that have no traffic yet still need a row.
     private(set) var emptyConversations: [Double] = []
 
@@ -256,8 +268,69 @@ final class AppModel {
             } else {
                 transcript.append(line)
             }
+            if isForeground, let active = activeConversation, Self.line(line, isNear: active) {
+                markRead(near: active)
+            }
+            if update.isComplete, !announced.contains(line.id), mentionsMe(line.text) {
+                announced.insert(line.id)
+                repliesToMe += 1
+                if !isForeground { notify(line) }
+            }
         }
         if transcript.count > 500 { transcript.removeFirst(transcript.count - 500) }
+    }
+
+    // MARK: - Read state and replies
+
+    /// Whether a message names our callsign.
+    func mentionsMe(_ text: String) -> Bool {
+        let mine = preferences.callsign
+        guard !mine.isEmpty else { return false }
+        return text.uppercased().split(separator: " ").contains { $0 == Substring(mine) || $0.hasSuffix("/" + mine) || $0.hasPrefix(mine + "/") }
+    }
+
+    private func lastReadKey(near frequency: Double) -> Double? {
+        lastRead.keys.first { abs($0 - frequency) <= Self.conversationHalfWidth }
+    }
+
+    /// The conversation at `frequency` has been seen up to now.
+    func markRead(near frequency: Double) {
+        if let key = lastReadKey(near: frequency) { lastRead.removeValue(forKey: key) }
+        lastRead[frequency] = Date()
+    }
+
+    /// Messages heard in a conversation since it was last open. The open
+    /// conversation, on screen, is always read.
+    func unreadCount(in band: FrequencyBand) -> Int {
+        if isForeground, let active = activeConversation, abs(active - band.frequency) <= Self.conversationHalfWidth { return 0 }
+        let since = lastReadKey(near: band.frequency).flatMap { lastRead[$0] } ?? .distantPast
+        return band.lines.filter { $0.kind == .received && $0.time > since }.count
+    }
+
+    /// How many conversations have something unread, for the tab badge.
+    var unreadConversations: Int {
+        bands.filter { unreadCount(in: $0) > 0 }.count
+    }
+
+    /// Asked the first time something is sent: that is the first moment a
+    /// reply matters. The receiver keeps decoding in the background.
+    private func requestNotificationsIfNeeded() {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .notDetermined else { return }
+            center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+    }
+
+    /// A message for us, arrived while the app was off screen.
+    private func notify(_ line: TranscriptLine) {
+        let content = UNMutableNotificationContent()
+        content.title = line.callsign ?? "Heard on \(Int(line.frequency)) Hz"
+        content.body = line.text
+        content.sound = .default
+        content.threadIdentifier = "\(Int(line.frequency.rounded()))"
+        let request = UNNotificationRequest(identifier: "line-\(line.id)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     /// Our own transmission coming back through the radio: the same text,
@@ -324,12 +397,14 @@ final class AppModel {
     /// onto it, since that is where any reply belongs.
     func enterConversation(at frequency: Double, callsign: String? = nil) {
         activeConversation = frequency
+        markRead(near: frequency)
         preferences.txFrequency = frequency
         if !preferences.rxFollowsTx { preferences.rxFrequency = frequency }
         if let callsign, theirCall.isEmpty { theirCall = callsign }
     }
 
     func leaveConversation() {
+        if let active = activeConversation { markRead(near: active) }
         activeConversation = nil
     }
 
@@ -492,6 +567,7 @@ final class AppModel {
             return
         }
         preferences.lastTransmitAt = Date()
+        requestNotificationsIfNeeded()
         let id = nextSentID
         nextSentID -= 1
         pendingSent.append(id)
@@ -533,6 +609,24 @@ final class AppModel {
         } else {
             theirCall = ""
         }
+    }
+
+    // MARK: - Stations
+
+    /// What the transcript knows about a station: where and when it was
+    /// last heard, how strong, and the grid if it sent one.
+    struct Station: Equatable {
+        var callsign: String
+        var grid: String
+        var lastHeard: TranscriptLine
+        var messageCount: Int
+    }
+
+    func station(_ callsign: String, near frequency: Double) -> Station? {
+        let theirs = lines(near: frequency).filter { $0.kind == .received && $0.callsign == callsign }
+        guard let last = theirs.last else { return nil }
+        let draft = ContactParser.draft(from: last, conversation: lines(near: frequency), myCallsign: preferences.callsign, myGrid: preferences.grid)
+        return Station(callsign: callsign, grid: draft.theirGrid, lastHeard: last, messageCount: theirs.count)
     }
 
     // MARK: - Contacts

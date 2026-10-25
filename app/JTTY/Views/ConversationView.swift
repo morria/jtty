@@ -11,21 +11,52 @@ struct ConversationView: View {
 
     @State private var draft = ""
     @State private var contactToLog: LogEntry?
+    @State private var showsStation = false
+    @State private var sends = 0
+    @State private var keyboard = KeyboardObserver()
     @FocusState private var composing: Bool
 
     private var lines: [TranscriptLine] { model.lines(near: frequency) }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            transcript
-            Divider()
-            controls
+    /// Who is here, most recent first, without us.
+    private var stations: [String] {
+        var seen: [String] = []
+        for line in lines.reversed() where line.kind == .received {
+            if let call = line.callsign, call != model.preferences.callsign, !seen.contains(call) { seen.append(call) }
         }
+        return seen
+    }
+
+    /// The station, as a messaging app titles a thread by the person.
+    private var title: String {
+        if lines.isEmpty { return "New message" }
+        return stations.isEmpty ? "\(Int(frequency)) Hz" : stations.prefix(2).joined(separator: " · ")
+    }
+
+    private var utcCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                transcript
+                Divider()
+                controls
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The keyboard's own frame, less the inset already there for the
+            // tab bar, instead of SwiftUI's avoidance; see KeyboardObserver.
+            .padding(.bottom, max(0, keyboard.overlap - geometry.safeAreaInsets.bottom))
+        }
+        .ignoresSafeArea(.keyboard)
         .background(Color(.systemGroupedBackground))
-        .dismissesKeyboard()
-        .navigationTitle("\(Int(frequency)) Hz")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) { titleView }
             ToolbarItem(placement: .topBarTrailing) {
                 ListenButton()
             }
@@ -33,8 +64,46 @@ struct ConversationView: View {
         .sheet(item: $contactToLog) { entry in
             LogEntryEditor(entry: entry, isNew: true) { model.record($0) }
         }
+        .sheet(isPresented: $showsStation) {
+            if let callsign = stations.first {
+                StationCard(callsign: callsign, frequency: frequency)
+            }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .onAppear { model.enterConversation(at: frequency, callsign: callsign) }
         .onDisappear { if model.activeConversation == frequency { model.leaveConversation() } }
+    }
+
+    /// The station over the frequency; tap for the station card, as
+    /// Messages opens a contact from its title.
+    private var titleView: some View {
+        Button {
+            showsStation = true
+        } label: {
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text("\(Int(frequency)) Hz")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(stations.isEmpty)
+        .accessibilityLabel("\(title), \(Int(frequency)) hertz")
+        .accessibilityHint(stations.isEmpty ? "" : "Shows the station")
+    }
+
+    /// "Today", "Yesterday", or the date, in UTC.
+    private func dayLabel(for date: Date) -> String {
+        if utcCalendar.isDateInToday(date) { return "Today" }
+        if utcCalendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.timeZone = utcCalendar.timeZone
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter.string(from: date)
     }
 
     private var transcript: some View {
@@ -56,8 +125,15 @@ struct ConversationView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                     }
-                    ForEach(lines) { line in
-                        TranscriptRow(line: line, showsFrequency: false)
+                    ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                        if index == 0 || !utcCalendar.isDate(lines[index - 1].time, inSameDayAs: line.time) {
+                            Text(dayLabel(for: line.time))
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        TranscriptRow(line: line, showsFrequency: false, highlight: model.preferences.callsign)
                             .id(line.id)
                             .contextMenu {
                                 ConversationContextMenu(line: line) { contactToLog = model.draftContact(from: line) }
@@ -68,6 +144,9 @@ struct ConversationView: View {
                 .padding(.vertical, 8)
             }
             .scrollDismissesKeyboard(.interactively)
+            // A tap on the transcript puts the keyboard away; a tap on the
+            // controls below is part of writing the message and must not.
+            .dismissesKeyboard()
             .onAppear {
                 if let id = lines.last?.id { proxy.scrollTo(id, anchor: .bottom) }
             }
@@ -75,6 +154,9 @@ struct ConversationView: View {
                 if let id { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) } }
             }
             .onChange(of: lines.last?.text) { _, _ in
+                if let id = lines.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+            }
+            .onChange(of: keyboard.overlap) { _, _ in
                 if let id = lines.last?.id { proxy.scrollTo(id, anchor: .bottom) }
             }
         }
@@ -87,6 +169,7 @@ struct ConversationView: View {
             TransmitBanner()
             RouteWarning()
             exchangeStrip
+            if !recentCallsigns.isEmpty { callsignStrip }
             macroStrip
             composeBar
         }
@@ -95,13 +178,51 @@ struct ConversationView: View {
         .background(.bar)
     }
 
-    /// Who is being worked, who is next, and the serial number.
+    /// Stations heard lately, this conversation's first, then the rest of
+    /// the band, newest first. Never us.
+    private var recentCallsigns: [String] {
+        var calls = stations
+        for line in model.transcript.reversed() where line.kind == .received {
+            if let call = line.callsign, call != model.preferences.callsign, !calls.contains(call) { calls.append(call) }
+            if calls.count >= 8 { break }
+        }
+        return Array(calls.prefix(8))
+    }
+
+    /// Tap a station to address it, the way Messages suggests recent
+    /// contacts under the To: line.
+    private var callsignStrip: some View {
+        @Bindable var model = model
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(recentCallsigns, id: \.self) { call in
+                    let selected = model.theirCall == call
+                    Button {
+                        model.theirCall = selected ? "" : call
+                    } label: {
+                        Text(call)
+                            .font(.footnote.monospaced().weight(.medium))
+                            .foregroundStyle(selected ? Color.white : Palette.teal)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(selected ? Palette.teal : Palette.teal.opacity(0.14), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(selected ? "Addressed to \(call)" : "Address to \(call)")
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    /// Who is being worked, who is next, and the serial number: the "To:"
+    /// line of a new message, which is what it is.
     private var exchangeStrip: some View {
         @Bindable var model = model
         return HStack(spacing: 10) {
-            CallField(label: "Their call", text: $model.theirCall)
+            CallField(label: "To:", placeholder: "Callsign", text: $model.theirCall)
             if model.preferences.contestMode {
-                CallField(label: "Next", text: $model.queuedCall)
+                CallField(label: "Next:", placeholder: "Callsign", text: $model.queuedCall)
             }
             if model.preferences.contestMode, model.preferences.exchangeProfile != .fieldDay {
                 HStack(spacing: 6) {
@@ -118,15 +239,19 @@ struct ConversationView: View {
             }
         }
         .padding(.horizontal)
+        .overlay(alignment: .bottom) { Divider().padding(.horizontal) }
     }
 
     private var macroStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(0..<8, id: \.self) { index in
-                    MacroButton(label: model.preferences.macroLabels[index], preview: model.preview(ofMacro: index)) {
-                        model.sendMacro(index)
-                    }
+                    MacroButton(
+                        label: model.preferences.macroLabels[index],
+                        preview: model.preview(ofMacro: index),
+                        insert: { append(model.preview(ofMacro: index)) },
+                        send: { model.sendMacro(index) }
+                    )
                 }
             }
             .padding(.horizontal)
@@ -164,6 +289,18 @@ struct ConversationView: View {
         }
     }
 
+    /// Add a quick message to the draft, spaced as a word, and leave the
+    /// cursor after it with the keyboard up, so a message can be built
+    /// from quick messages and typing in any mix.
+    private func append(_ text: String) {
+        let word = text.trimmingCharacters(in: .whitespaces)
+        guard !word.isEmpty else { return }
+        var base = draft
+        if !base.isEmpty, !base.hasSuffix(" ") { base += " " }
+        draft = base + word + " "
+        composing = true
+    }
+
     private func frameCount(for text: String) -> Int? {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         return try? JTTYEncoder.pack(text: text, profile: model.preferences.exchangeProfile).frameCount
@@ -175,25 +312,34 @@ struct ConversationView: View {
         model.send(text: text)
         draft = ""
         composing = false
+        sends += 1
     }
 }
 
-/// A callsign field: uppercase, monospaced, flexible width.
+/// A callsign field with a label in front, like the To: line of a new
+/// message: uppercase, monospaced, flexible width.
 struct CallField: View {
     let label: String
+    var placeholder = ""
     @Binding var text: String
 
     var body: some View {
-        TextField(label, text: $text)
-            .textInputAutocapitalization(.characters)
-            .autocorrectionDisabled()
-            .font(.body.monospaced())
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: .infinity)
-            .onChange(of: text) { _, value in
-                let upper = value.uppercased()
-                if upper != value { text = upper }
-            }
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            TextField(placeholder, text: $text)
+                .textInputAutocapitalization(.characters)
+                .autocorrectionDisabled()
+                .font(.body.monospaced())
+                .onChange(of: text) { _, value in
+                    let upper = value.uppercased()
+                    if upper != value { text = upper }
+                }
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -270,6 +416,9 @@ struct ConversationContextMenu: View {
         }
         if line.kind == .received {
             Button("Log contact…", systemImage: "book.closed") { logContact() }
+        }
+        if line.kind == .sent {
+            Button("Send again", systemImage: "arrow.counterclockwise") { model.send(text: line.text) }
         }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
     }

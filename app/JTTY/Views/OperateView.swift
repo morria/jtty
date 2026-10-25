@@ -9,7 +9,11 @@ struct OperateView: View {
     /// Conversations by frequency, or everything in one stream.
     @AppStorage("showsEverything") private var showsEverything = false
     @State private var path: [Destination] = OperateView.initialPath
+    /// The open conversation when the list and the conversation sit side by
+    /// side (iPad); `path` carries it when they stack (iPhone).
+    @State private var selected: Destination? = OperateView.initialPath.first
     @State private var contactToLog: LogEntry?
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     /// `-conversation 1507` on a debug launch opens that frequency.
     private static var initialPath: [Destination] {
@@ -28,63 +32,117 @@ struct OperateView: View {
         var callsign: String?
     }
 
+    /// Wide enough for two columns: the iPad, full screen or a big split.
+    private var isSplit: Bool { sizeClass == .regular }
+
     var body: some View {
-        NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                if showsWaterfall {
-                    BandWaterfall { hz in path.append(Destination(frequency: hz)) }
-                }
-                if showsEverything {
-                    transcript
+        if isSplit {
+            NavigationSplitView {
+                band
+                    .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 520)
+            } detail: {
+                if let selected {
+                    ConversationView(frequency: selected.frequency, callsign: selected.callsign)
+                        .id(selected.frequency)
                 } else {
-                    conversations
-                }
-                VStack(spacing: 8) {
-                    TransmitBanner()
-                    RouteWarning()
+                    noConversation
                 }
             }
-            .background(Color(.systemGroupedBackground))
-            .dismissesKeyboard()
-            .navigationTitle("Band")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: Destination.self) { destination in
-                ConversationView(frequency: destination.frequency, callsign: destination.callsign)
-            }
-            .sheet(item: $contactToLog) { entry in
-                LogEntryEditor(entry: entry, isNew: true) { model.record($0) }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Picker("Show", selection: $showsEverything) {
-                            Label("Conversations", systemImage: "bubble.left.and.bubble.right").tag(false)
-                            Label("Everything", systemImage: "text.alignleft").tag(true)
-                        }
-                        Toggle("Waterfall", isOn: $showsWaterfall)
-                        Button("Clear", systemImage: "trash") { model.clearTranscript() }
-                            .disabled(model.transcript.isEmpty)
-                        Button(model.audio.isTuning ? "Stop tuning" : "Tune (10 s tone)", systemImage: "tuningfork") { model.tune() }
-                        Toggle(isOn: Binding(get: { model.audio.isRecording }, set: { _ in model.toggleRecording() })) {
-                            Label("Record audio", systemImage: "record.circle")
-                        }
-                        .disabled(!model.isListening)
-                        Section("Audio route") {
-                            Text("In: \(model.audio.inputRoute)")
-                            Text("Out: \(model.audio.outputRoute)")
-                        }
-                        Section("Receiver this session") {
-                            Text("\(model.statistics.syncHits) sync hits · \(model.statistics.decodes) frames decoded")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+        } else {
+            NavigationStack(path: $path) {
+                band
+                    .navigationDestination(for: Destination.self) { destination in
+                        ConversationView(frequency: destination.frequency, callsign: destination.callsign)
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("New conversation", systemImage: "square.and.pencil") {
-                        path.append(Destination(frequency: model.newConversationFrequency()))
+            }
+        }
+    }
+
+    /// Open a conversation: beside the list or on top of it, as the width allows.
+    private func open(_ destination: Destination) {
+        if isSplit { selected = destination } else { path.append(destination) }
+    }
+
+    /// The detail column before anything is chosen.
+    private var noConversation: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.largeTitle)
+                .foregroundStyle(.tertiary)
+            Text("No conversation")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Choose one from the list, or New to call CQ.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemGroupedBackground))
+        .toolbar {
+            // Listen lives in the conversation's bar; keep it there before
+            // one is open too.
+            ToolbarItem(placement: .topBarTrailing) { ListenButton() }
+        }
+    }
+
+    /// The band itself: waterfall, conversations or everything, and the
+    /// transmit state. The same in both layouts.
+    private var band: some View {
+        VStack(spacing: 0) {
+            if showsWaterfall {
+                BandWaterfall { hz in open(Destination(frequency: hz)) }
+            }
+            if showsEverything {
+                transcript
+            } else {
+                conversations
+            }
+            VStack(spacing: 8) {
+                TransmitBanner()
+                RouteWarning()
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+        // No `dismissesKeyboard()` here: nothing on this screen takes
+        // typing, and its tap gesture swallowed taps on the list rows.
+        .navigationTitle(showsEverything ? "Band" : "Messages")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $contactToLog) { entry in
+            LogEntryEditor(entry: entry, isNew: true) { model.record($0) }
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    Picker("Show", selection: $showsEverything) {
+                        Label("Conversations", systemImage: "bubble.left.and.bubble.right").tag(false)
+                        Label("Everything", systemImage: "text.alignleft").tag(true)
                     }
+                    Toggle("Waterfall", isOn: $showsWaterfall)
+                    Button("Clear", systemImage: "trash") { model.clearTranscript() }
+                        .disabled(model.transcript.isEmpty)
+                    Button(model.audio.isTuning ? "Stop tuning" : "Tune (10 s tone)", systemImage: "tuningfork") { model.tune() }
+                    Toggle(isOn: Binding(get: { model.audio.isRecording }, set: { _ in model.toggleRecording() })) {
+                        Label("Record audio", systemImage: "record.circle")
+                    }
+                    .disabled(!model.isListening)
+                    Section("Audio route") {
+                        Text("In: \(model.audio.inputRoute)")
+                        Text("Out: \(model.audio.outputRoute)")
+                    }
+                    Section("Receiver this session") {
+                        Text("\(model.statistics.syncHits) sync hits · \(model.statistics.decodes) frames decoded")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("New conversation", systemImage: "square.and.pencil") {
+                    open(Destination(frequency: model.newConversationFrequency()))
+                }
+            }
+            if !isSplit {
+                // Beside a conversation the button in its own bar is enough.
                 ToolbarItem(placement: .topBarTrailing) {
                     ListenButton()
                 }
@@ -94,19 +152,39 @@ struct OperateView: View {
 
     // MARK: - Conversations
 
+    /// Which row is highlighted in the split layout: the open conversation's
+    /// frequency. Selecting a row opens it with whoever is there.
+    private var selectedFrequency: Binding<Double?> {
+        Binding(
+            get: { selected?.frequency },
+            set: { hz in
+                guard let hz else { return }
+                let band = model.bands.first { $0.frequency == hz }
+                open(Destination(frequency: hz, callsign: band?.callsigns(excluding: model.preferences.callsign).first))
+            }
+        )
+    }
+
     private var conversations: some View {
         let bands = model.bands
-        return List {
+        return List(selection: selectedFrequency) {
             if bands.isEmpty {
                 emptyState
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
             ForEach(bands) { band in
-                Button {
-                    path.append(Destination(frequency: band.frequency, callsign: band.callsigns(excluding: model.preferences.callsign).first))
-                } label: {
-                    BandRow(band: band, myCallsign: model.preferences.callsign, isTransmitFrequency: abs(band.frequency - model.preferences.txFrequency) <= AppModel.conversationHalfWidth)
+                let row = BandRow(
+                    band: band, myCallsign: model.preferences.callsign,
+                    isTransmitFrequency: abs(band.frequency - model.preferences.txFrequency) <= AppModel.conversationHalfWidth,
+                    unread: model.unreadCount(in: band)
+                )
+                Group {
+                    if isSplit {
+                        row.tag(band.frequency)
+                    } else {
+                        NavigationLink(value: Destination(frequency: band.frequency, callsign: band.callsigns(excluding: model.preferences.callsign).first)) { row }
+                    }
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .contextMenu {
@@ -129,7 +207,7 @@ struct OperateView: View {
                     }
                     ForEach(model.transcript) { line in
                         Button {
-                            path.append(Destination(frequency: line.frequency, callsign: line.kind == .received ? line.callsign : nil))
+                            open(Destination(frequency: line.frequency, callsign: line.kind == .received ? line.callsign : nil))
                         } label: {
                             TranscriptRow(line: line, showsFrequency: true)
                         }
@@ -161,15 +239,42 @@ struct OperateView: View {
                 .foregroundStyle(.secondary)
             Text(model.isListening
                  ? (showsEverything
-                    ? "Everything heard on the band appears here. Tap a message to open its frequency, or New to call CQ."
-                    : "Each frequency with traffic becomes a conversation here. Tap one to join it, or New to call CQ.")
+                    ? "Everything heard on the band appears here. Tap a message to open its frequency."
+                    : "Each station heard becomes a conversation here. Tap one to join it.")
                  : "Connect the radio's audio and tap Listen.")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+            Group {
+                if model.isListening {
+                    Button {
+                        open(Destination(frequency: model.newConversationFrequency()))
+                    } label: {
+                        Label("Call CQ", systemImage: "square.and.pencil").foregroundStyle(.white)
+                    }
+                } else {
+                    Button {
+                        model.toggleListening()
+                    } label: {
+                        // Explicitly white: on the teal pill the icon
+                        // otherwise takes the tint and disappears.
+                        Label("Listen", systemImage: "ear").foregroundStyle(.white)
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Palette.teal)
+            .padding(.top, 10)
+            // What a messaging app cannot promise here, said up front.
+            Text("Messages are a few words at a time, a couple of seconds each, and anyone on the band can read them.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.top, 14)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 40)
+        .padding(.horizontal, 24)
     }
 
     @ViewBuilder
@@ -177,14 +282,17 @@ struct OperateView: View {
         if let callsign = line.callsign, callsign != model.preferences.callsign, line.kind == .received {
             Button("Call \(callsign)", systemImage: "person.wave.2") {
                 model.adopt(callsign: callsign, frequency: line.frequency)
-                path.append(Destination(frequency: line.frequency, callsign: callsign))
+                open(Destination(frequency: line.frequency, callsign: callsign))
             }
         }
         Button("Open \(Int(line.frequency)) Hz", systemImage: "bubble.left.and.bubble.right") {
-            path.append(Destination(frequency: line.frequency))
+            open(Destination(frequency: line.frequency))
         }
         if line.kind == .received {
             Button("Log contact…", systemImage: "book.closed") { contactToLog = model.draftContact(from: line) }
+        }
+        if line.kind == .sent {
+            Button("Send again", systemImage: "arrow.counterclockwise") { model.send(text: line.text) }
         }
         Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = line.text }
     }
@@ -196,13 +304,7 @@ struct BandRow: View {
     let band: FrequencyBand
     let myCallsign: String
     let isTransmitFrequency: Bool
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter
-    }()
+    var unread = 0
 
     private var title: String {
         let calls = band.callsigns(excluding: myCallsign)
@@ -211,6 +313,13 @@ struct BandRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
+            // Unread, where Messages puts its dot.
+            Circle()
+                .fill(unread > 0 ? Palette.teal : .clear)
+                .frame(width: 9, height: 9)
+                .padding(.top, 20)
+                .padding(.leading, -4)
+                .accessibilityHidden(true)
             // The frequency, where a messaging app would put a face.
             VStack(spacing: 2) {
                 Text("\(Int(band.frequency))")
@@ -234,19 +343,26 @@ struct BandRow: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(title)
                         .font(.headline)
+                        .fontWeight(unread > 0 ? .bold : .semibold)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     if let latest = band.latest {
-                        Text(Self.timeFormatter.string(from: latest.time))
+                        Text(messagingTimestamp(latest.time))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(unread > 0 ? Palette.teal : .secondary)
                     }
                 }
                 if let latest = band.latest {
                     HStack(spacing: 4) {
+                        if latest.kind == .sent {
+                            Image(systemName: latest.heardBack ? "checkmark.circle.fill" : latest.isInProgress ? "arrow.up.circle" : "checkmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(latest.heardBack ? Palette.teal : .secondary)
+                                .accessibilityLabel(latest.heardBack ? "Heard" : latest.isInProgress ? "Sending" : "Sent")
+                        }
                         Text((latest.kind == .sent ? "You: " : "") + latest.text)
                             .font(.subheadline.monospaced())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(unread > 0 ? .primary : .secondary)
                             .lineLimit(2)
                         if latest.isInProgress {
                             Image(systemName: "ellipsis")
@@ -277,8 +393,27 @@ struct BandRow: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(Int(band.frequency)) hertz, \(band.latest?.text ?? "nothing heard yet")")
+        .accessibilityLabel("\(title), \(Int(band.frequency)) hertz, \(unread > 0 ? "\(unread) unread, " : "")\(band.latest?.text ?? "nothing heard yet")")
     }
+}
+
+/// A time the way a messaging app writes one, in UTC like everything
+/// else here: the time today, "Yesterday", otherwise the date.
+func messagingTimestamp(_ date: Date) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    let formatter = DateFormatter()
+    formatter.timeZone = calendar.timeZone
+    if calendar.isDateInToday(date) {
+        formatter.dateFormat = "HH:mm"
+    } else if calendar.isDateInYesterday(date) {
+        return "Yesterday"
+    } else if calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
+        formatter.dateFormat = "d MMM"
+    } else {
+        formatter.dateFormat = "d MMM yyyy"
+    }
+    return formatter.string(from: date)
 }
 
 /// The waterfall and the level meter, in a view of their own so their ten
@@ -316,30 +451,46 @@ struct BandWaterfall: View {
     }
 }
 
-/// One quick message: what it is for, and exactly what it would send.
+/// One quick message: what it is for, and exactly what it would send. A tap
+/// puts it in the message box to look over or edit; a long press sends it
+/// straight away.
 struct MacroButton: View {
     let label: String
     let preview: String
-    let action: () -> Void
+    let insert: () -> Void
+    let send: () -> Void
+
+    @State private var isPressed = false
+    @State private var sendCount = 0
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Palette.teal)
-                Text(preview.isEmpty ? "—" : preview)
-                    .font(.footnote.monospaced())
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Palette.teal)
+            Text(preview.isEmpty ? "—" : preview)
+                .font(.footnote.monospaced())
+                .lineLimit(1)
+                .foregroundStyle(.primary)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10))
+        .opacity(isPressed ? 0.5 : 1)
+        .animation(.easeOut(duration: 0.15), value: isPressed)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture(perform: insert)
+        .onLongPressGesture(minimumDuration: 0.45, pressing: { isPressed = $0 }) {
+            sendCount += 1
+            send()
+        }
+        .sensoryFeedback(.impact(weight: .medium), trigger: sendCount)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(preview)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Puts the message in the message box. Long press to send it now.")
+        .accessibilityAction(named: "Send now", send)
     }
 }
 
@@ -397,6 +548,9 @@ struct BandSheet: View {
 struct TranscriptRow: View {
     let line: TranscriptLine
     var showsFrequency = true
+    /// Our callsign, picked out in received text so "is this for me?" is
+    /// answered at a glance.
+    var highlight: String?
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -407,12 +561,28 @@ struct TranscriptRow: View {
 
     private var isSent: Bool { line.kind == .sent }
 
+    private var text: AttributedString {
+        var attributed = AttributedString(line.text.isEmpty ? " " : line.text)
+        guard !isSent, let highlight, !highlight.isEmpty else { return attributed }
+        var search = attributed.startIndex
+        while let range = attributed[search...].range(of: highlight) {
+            let before = range.lowerBound == attributed.startIndex || attributed.characters[attributed.index(beforeCharacter: range.lowerBound)] == " "
+            let after = range.upperBound == attributed.endIndex || attributed.characters[range.upperBound] == " "
+            if before, after {
+                attributed[range].font = .body.monospaced().weight(.bold)
+                attributed[range].foregroundColor = Palette.teal
+            }
+            search = range.upperBound
+        }
+        return attributed
+    }
+
     var body: some View {
         HStack {
             if isSent { Spacer(minLength: 40) }
             VStack(alignment: isSent ? .trailing : .leading, spacing: 3) {
                 HStack(spacing: 4) {
-                    Text(line.text.isEmpty ? " " : line.text)
+                    Text(text)
                         .font(.body.monospaced())
                         .foregroundStyle(isSent ? Color.white : .primary)
                         .multilineTextAlignment(isSent ? .trailing : .leading)
@@ -432,9 +602,12 @@ struct TranscriptRow: View {
                     }
                     if isSent, line.heardBack {
                         // The radio's monitor heard it: it went out.
-                        Label(line.snr.map { String(format: "heard %+.0f dB", $0) } ?? "heard", systemImage: "checkmark")
+                        Label(line.snr.map { String(format: "Heard %+.0f dB", $0) } ?? "Heard", systemImage: "checkmark")
                             .labelStyle(.titleAndIcon)
                             .foregroundStyle(Color.white.opacity(0.9))
+                    } else if isSent {
+                        // Honest words: the audio went out, or is going.
+                        Text(line.isInProgress ? "Sending…" : "Sent")
                     } else if let snr = line.snr {
                         Text(String(format: "%+.0f dB", snr))
                             .foregroundStyle(isSent ? Color.white.opacity(0.8) : Palette.signalColor(for: snr))
